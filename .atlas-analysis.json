@@ -1,0 +1,149 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Tank",
+  "projectDescription": "Security-first package manager for AI agent skills with versioning, lockfiles, permissions, and 6-stage security scanning",
+  "theme": "aspen",
+  "primaryColor": "#0ea5e9",
+  "lightColor": "#06b6d4",
+  "darkColor": "#0284c7",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/skills",
+              "concepts/manifest",
+              "concepts/lockfile",
+              "concepts/permissions",
+              "concepts/security-scanning"
+            ]
+          },
+          {
+            "group": "CLI Commands",
+            "pages": [
+              "cli/authentication",
+              "cli/project-setup",
+              "cli/publishing",
+              "cli/installation",
+              "cli/security",
+              "cli/linking"
+            ]
+          },
+          {
+            "group": "Security",
+            "pages": [
+              "security/overview",
+              "security/pipeline",
+              "security/permissions",
+              "security/audit-score",
+              "security/best-practices"
+            ]
+          },
+          {
+            "group": "Registry",
+            "pages": [
+              "registry/web-interface",
+              "registry/organizations",
+              "registry/api-keys",
+              "registry/enterprise"
+            ]
+          },
+          {
+            "group": "Development",
+            "pages": [
+              "development/setup",
+              "development/architecture",
+              "development/contributing",
+              "development/testing"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "CLI API",
+            "pages": [
+              "api/cli/overview",
+              "api/cli/auth-commands",
+              "api/cli/skill-commands",
+              "api/cli/security-commands"
+            ]
+          },
+          {
+            "group": "Registry API",
+            "pages": [
+              "api/registry/overview",
+              "api/registry/authentication",
+              "api/registry/skills",
+              "api/registry/search",
+              "api/registry/security"
+            ]
+          },
+          {
+            "group": "Schemas",
+            "pages": [
+              "api/schemas/skills-json",
+              "api/schemas/skills-lock",
+              "api/schemas/permissions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Semver versioning with permission escalation detection",
+    "Deterministic lockfiles with SHA-512 integrity verification",
+    "Permission model with install-time enforcement",
+    "6-stage security pipeline (structure, static analysis, injection detection, secrets, supply chain)",
+    "Transparent 0-10 audit scores",
+    "GitHub OAuth authentication with API key management",
+    "Web registry with organization support",
+    "Agent linking for multi-agent workspaces",
+    "Full-text search with skill discovery",
+    "Enterprise SSO and on-premises deployment support"
+  ],
+  "publicApiSurface": [
+    "tank login",
+    "tank logout",
+    "tank whoami",
+    "tank init",
+    "tank publish",
+    "tank install",
+    "tank update",
+    "tank remove",
+    "tank search",
+    "tank info",
+    "tank verify",
+    "tank permissions",
+    "tank audit",
+    "tank link",
+    "tank unlink",
+    "tank upgrade",
+    "tank doctor",
+    "POST /api/v1/cli-auth/start",
+    "POST /api/v1/cli-auth/exchange",
+    "GET /api/v1/skills",
+    "POST /api/v1/skills",
+    "POST /api/v1/skills/confirm",
+    "GET /api/v1/skills/{name}",
+    "GET /api/v1/skills/{name}/versions",
+    "GET /api/v1/skills/{name}/{version}",
+    "GET /api/v1/search",
+    "POST /api/analyze/scan",
+    "POST /api/analyze/rescan"
+  ]
+}
