@@ -444,6 +444,83 @@ tank info @tank/typescript
 
 ---
 
+## upgrade
+
+Upgrade Tank CLI to the latest version.
+
+```bash
+tank upgrade
+tank upgrade --version 0.4.0
+tank upgrade --dry-run
+```
+
+### Options
+
+<ParamField path="--version" type="string">
+  Specific version to upgrade to (default: latest)
+</ParamField>
+
+<ParamField path="--dry-run" type="boolean">
+  Show what would be upgraded without making changes
+</ParamField>
+
+<ParamField path="--force" type="boolean">
+  Force upgrade even if already on target version
+</ParamField>
+
+### Examples
+
+**Upgrade to latest version:**
+
+```bash
+tank upgrade
+# Upgrading tank 0.3.1 → 0.4.0...
+# ✓ Upgraded tank 0.3.1 → 0.4.0
+# Release notes: https://github.com/tankpkg/tank/releases/tag/v0.4.0
+```
+
+**Check available upgrade:**
+
+```bash
+tank upgrade --dry-run
+# Would upgrade tank 0.3.1 → 0.4.0
+```
+
+**Upgrade to specific version:**
+
+```bash
+tank upgrade --version 0.3.5
+# Upgrading tank 0.3.1 → 0.3.5...
+# ✓ Upgraded tank 0.3.1 → 0.3.5
+```
+
+### Flow
+
+1. Detects installation method (Homebrew vs. binary)
+2. Fetches latest release from GitHub API (or uses `--version`)
+3. Downloads binary for current platform (darwin/linux) and architecture (arm64/x64)
+4. Verifies SHA-256 checksum from `SHA256SUMS` file
+5. Replaces current binary with new version
+6. Reports success with release notes link
+
+### Installation Method Detection
+
+- **Homebrew**: If binary path contains `/Cellar/` or `/homebrew/`, redirects to `brew upgrade tank`
+- **Binary**: Self-upgrades by replacing binary in place
+
+### Security
+
+- All binaries are verified with SHA-256 checksums before installation
+- Download aborts if checksum mismatch detected
+- Downloads from official GitHub releases only
+
+### Exit Codes
+
+- `0` - Successfully upgraded (or already on target version)
+- `1` - Upgrade failed (network error, checksum mismatch, etc.)
+
+---
+
 ## link
 
 Link current skill directory to AI agent directories (for development).
