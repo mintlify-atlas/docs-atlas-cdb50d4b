@@ -1,0 +1,443 @@
+---
+title: 'Skills API'
+description: 'Publish, download, and manage skills via the Registry API'
+icon: 'box'
+---
+
+## Overview
+
+The Skills API provides endpoints for publishing, discovering, and downloading AI agent skills.
+
+## Publish Skill
+
+**Endpoint**: `POST /api/v1/skills`
+
+Publish a new skill or skill version. This is a two-phase process:
+
+1. **POST /skills** - Create version record and get upload URL
+2. **Upload tarball** to signed URL
+3. **POST /skills/confirm** - Trigger security scan and finalize
+
+<Note>
+  Requires `skills:publish` scope.
+</Note>
+
+### Request
+
+<ParamField body="manifest" type="object" required>
+  Skill manifest matching skills.json schema
+  <Expandable>
+    <ParamField body="name" type="string" required>
+      Skill name (lowercase, may be scoped: `@org/name`)
+    </ParamField>
+    <ParamField body="version" type="string" required>
+      Semantic version (e.g., `1.0.0`)
+    </ParamField>
+    <ParamField body="description" type="string">
+      Human-readable description
+    </ParamField>
+    <ParamField body="repository" type="string">
+      Git repository URL
+    </ParamField>
+    <ParamField body="visibility" type="string">
+      `public` or `private` (default: `public`)
+    </ParamField>
+    <ParamField body="permissions" type="object">
+      Declared permissions (e.g., `{"network": true}`)
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<ParamField body="readme" type="string">
+  README.md content (markdown)
+</ParamField>
+
+<ParamField body="files" type="array">
+  List of file paths in tarball (for UI display)
+</ParamField>
+
+**Example**:
+
+```json
+{
+  "manifest": {
+    "name": "@tank/hello-world",
+    "version": "1.0.0",
+    "description": "A friendly greeting skill",
+    "repository": "https://github.com/tank/hello-world",
+    "visibility": "public",
+    "permissions": {
+      "network": false,
+      "filesystem": false
+    }
+  },
+  "readme": "# Hello World\n\nA simple greeting skill.",
+  "files": ["SKILL.md", "index.ts", "skills.json"]
+}
+```
+
+### Response
+
+<ResponseField name="uploadUrl" type="string">
+  Signed URL for uploading the tarball (valid for 1 hour)
+</ResponseField>
+
+<ResponseField name="skillId" type="string">
+  UUID of the skill record
+</ResponseField>
+
+<ResponseField name="versionId" type="string">
+  UUID of the version record
+</ResponseField>
+
+```json
+{
+  "uploadUrl": "https://storage.example.com/signed-url",
+  "skillId": "550e8400-e29b-41d4-a716-446655440000",
+  "versionId": "660e8400-e29b-41d4-a716-446655440001"
+}
+```
+
+### Error Responses
+
+**409 Conflict** - Version already exists:
+
+```json
+{
+  "error": "Version 1.0.0 already exists for @tank/hello-world"
+}
+```
+
+**400 Bad Request** - Invalid manifest:
+
+```json
+{
+  "error": "Invalid manifest",
+  "details": {
+    "name": ["Required"],
+    "version": ["Must follow semver format"]
+  }
+}
+```
+
+**403 Forbidden** - Organization membership required:
+
+```json
+{
+  "error": "You are not a member of org 'acme'"
+}
+```
+
+**400 Bad Request** - Permission escalation detected:
+
+```json
+{
+  "error": "Permission escalation detected",
+  "details": [
+    "Patch version added 'network' permission (requires minor/major bump)"
+  ]
+}
+```
+
+## Confirm Upload
+
+**Endpoint**: `POST /api/v1/skills/confirm`
+
+Finalize the publish after uploading the tarball. Triggers security scan.
+
+### Request
+
+<ParamField body="versionId" type="string" required>
+  Version ID from publish response
+</ParamField>
+
+<ParamField body="integrity" type="string" required>
+  SHA-512 hash of the tarball (format: `sha512-base64hash`)
+</ParamField>
+
+<ParamField body="fileCount" type="integer">
+  Number of files in the tarball
+</ParamField>
+
+<ParamField body="tarballSize" type="integer">
+  Size in bytes
+</ParamField>
+
+<ParamField body="readme" type="string">
+  README.md content (if not provided in initial publish)
+</ParamField>
+
+**Example**:
+
+```json
+{
+  "versionId": "660e8400-e29b-41d4-a716-446655440001",
+  "integrity": "sha512-abc123...",
+  "fileCount": 3,
+  "tarballSize": 4096
+}
+```
+
+### Response
+
+<ResponseField name="success" type="boolean">
+  Always `true` on successful confirmation
+</ResponseField>
+
+<ResponseField name="name" type="string">
+  Skill name
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  Version number
+</ResponseField>
+
+<ResponseField name="auditScore" type="number">
+  Audit score (0-10) based on security scan
+</ResponseField>
+
+<ResponseField name="scanVerdict" type="string">
+  Security scan verdict: `pass`, `pass_with_notes`, `flagged`, or `fail`
+</ResponseField>
+
+```json
+{
+  "success": true,
+  "name": "@tank/hello-world",
+  "version": "1.0.0",
+  "auditScore": 9,
+  "scanVerdict": "pass"
+}
+```
+
+## Get Skill Metadata
+
+**Endpoint**: `GET /api/v1/skills/{name}`
+
+Retrieve metadata for a skill.
+
+### Path Parameters
+
+<ParamField path="name" type="string" required>
+  Skill name (URL-encoded for scoped packages)
+</ParamField>
+
+**Example**:
+
+```bash
+GET /api/v1/skills/@tank%2Fhello-world
+```
+
+### Response
+
+<ResponseField name="name" type="string">
+  Skill name
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Description from manifest
+</ResponseField>
+
+<ResponseField name="visibility" type="string">
+  `public` or `private`
+</ResponseField>
+
+<ResponseField name="latestVersion" type="string">
+  Latest published version
+</ResponseField>
+
+<ResponseField name="publisher" type="object">
+  Publisher information
+  <Expandable>
+    <ResponseField name="name" type="string">
+      Publisher display name
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="createdAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+<ResponseField name="updatedAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+```json
+{
+  "name": "@tank/hello-world",
+  "description": "A friendly greeting skill",
+  "visibility": "public",
+  "latestVersion": "1.0.0",
+  "publisher": {
+    "name": "Jane Doe"
+  },
+  "createdAt": "2026-01-15T10:30:00Z",
+  "updatedAt": "2026-01-15T10:30:00Z"
+}
+```
+
+## List Versions
+
+**Endpoint**: `GET /api/v1/skills/{name}/versions`
+
+List all published versions of a skill.
+
+### Response
+
+<ResponseField name="name" type="string">
+  Skill name
+</ResponseField>
+
+<ResponseField name="versions" type="array">
+  Array of version objects (sorted by publish date, newest first)
+  <Expandable>
+    <ResponseField name="version" type="string">
+      Version number
+    </ResponseField>
+    <ResponseField name="integrity" type="string">
+      SHA-512 integrity hash
+    </ResponseField>
+    <ResponseField name="auditScore" type="number">
+      Audit score (0-10)
+    </ResponseField>
+    <ResponseField name="auditStatus" type="string">
+      Status: `completed`, `flagged`, `failed`, `scan-failed`
+    </ResponseField>
+    <ResponseField name="publishedAt" type="string">
+      ISO 8601 timestamp
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "name": "@tank/hello-world",
+  "versions": [
+    {
+      "version": "1.0.0",
+      "integrity": "sha512-abc123...",
+      "auditScore": 9,
+      "auditStatus": "completed",
+      "publishedAt": "2026-01-15T10:30:00Z"
+    }
+  ]
+}
+```
+
+## Get Version Details
+
+**Endpoint**: `GET /api/v1/skills/{name}/{version}`
+
+Get detailed information about a specific version, including download URL.
+
+### Response
+
+<ResponseField name="name" type="string">
+  Skill name
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  Version number
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  Description from manifest
+</ResponseField>
+
+<ResponseField name="integrity" type="string">
+  SHA-512 hash for verification
+</ResponseField>
+
+<ResponseField name="permissions" type="object">
+  Declared permissions
+</ResponseField>
+
+<ResponseField name="auditScore" type="number">
+  Audit score (0-10)
+</ResponseField>
+
+<ResponseField name="auditStatus" type="string">
+  Scan status
+</ResponseField>
+
+<ResponseField name="downloadUrl" type="string">
+  Signed URL for downloading tarball (valid for 1 hour)
+</ResponseField>
+
+<ResponseField name="publishedAt" type="string">
+  ISO 8601 timestamp
+</ResponseField>
+
+<ResponseField name="downloads" type="integer">
+  Download count (last 7 days)
+</ResponseField>
+
+<ResponseField name="scanVerdict" type="string">
+  Security scan verdict (if available)
+</ResponseField>
+
+<ResponseField name="scanFindings" type="array">
+  Security findings from scan
+  <Expandable>
+    <ResponseField name="stage" type="string">
+      Scan stage that found the issue
+    </ResponseField>
+    <ResponseField name="severity" type="string">
+      `critical`, `high`, `medium`, or `low`
+    </ResponseField>
+    <ResponseField name="type" type="string">
+      Finding type (e.g., `prompt_injection`)
+    </ResponseField>
+    <ResponseField name="description" type="string">
+      Human-readable description
+    </ResponseField>
+    <ResponseField name="location" type="string">
+      File and line number (if applicable)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+```json
+{
+  "name": "@tank/hello-world",
+  "version": "1.0.0",
+  "description": "A friendly greeting skill",
+  "integrity": "sha512-abc123...",
+  "permissions": {
+    "network": false,
+    "filesystem": false
+  },
+  "auditScore": 9,
+  "auditStatus": "completed",
+  "downloadUrl": "https://storage.example.com/signed-url",
+  "publishedAt": "2026-01-15T10:30:00Z",
+  "downloads": 42,
+  "scanVerdict": "pass",
+  "scanFindings": []
+}
+```
+
+## Download Workflow
+
+1. **GET** `/api/v1/skills/{name}/{version}` to get `downloadUrl` and `integrity`
+2. **Download** tarball from `downloadUrl`
+3. **Verify** SHA-512 hash matches `integrity`
+4. **Extract** tarball to local directory
+
+**Example** (using `tank install`):
+
+```bash
+tank install @tank/hello-world@1.0.0
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Search API" icon="magnifying-glass" href="/api/registry/search">
+    Discover skills with search
+  </Card>
+  <Card title="Security Scanning" icon="shield-check" href="/api/registry/security">
+    Learn about security analysis
+  </Card>
+</CardGroup>

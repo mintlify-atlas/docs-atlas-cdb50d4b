@@ -1,0 +1,361 @@
+---
+title: Linking Commands
+description: Link and unlink skills to AI agent workspaces
+---
+
+# Linking Commands
+
+Linking commands create symlinks between skills and AI agent workspaces, making skills discoverable by agents.
+
+## tank link
+
+Link a skill to all detected AI agent workspaces.
+
+```bash
+tank link
+```
+
+**Run from a skill directory** (directory containing `skills.json`).
+
+### Linking Flow
+
+1. Read `skills.json` to get skill name
+2. Detect installed AI agents on the system
+3. Create wrapper directory with frontmatter (if SKILL.md exists)
+4. Create symlinks in each agent's skills directory
+5. Record links in `~/.tank/links.json`
+
+### Example Output
+
+```bash
+$ cd my-skill
+$ tank link
+✓ OpenCode
+✓ Cursor
+✓ Windsurf
+✓ Linked my-skill to 3 agent(s)
+```
+
+### Detected Agents
+
+Tank automatically detects these agents:
+
+- **OpenCode** - `~/.config/opencode/skills/`
+- **Cursor** - `~/.cursor/skills/`
+- **Windsurf** - `~/.windsurf/skills/`
+- **Cline** - `~/.cline/skills/`
+- **Continue** - `~/.continue/skills/`
+
+See source: `apps/cli/src/lib/agents.ts:10`
+
+### No Agents Detected
+
+If no agents are installed:
+
+```bash
+$ tank link
+ℹ No AI agents detected. Skills linked to agents will be available once agents are installed.
+```
+
+Install an agent and run `tank link` again.
+
+### Already Linked
+
+If skill is already linked to an agent:
+
+```bash
+$ tank link
+⚠ - OpenCode (already linked)
+✓ Cursor
+✓ Linked my-skill to 1 agent(s)
+```
+
+## Frontmatter Generation
+
+If your skill has a `SKILL.md` file without frontmatter, Tank generates a wrapper:
+
+### Before (SKILL.md)
+
+```markdown
+# My Skill
+
+This skill does amazing things.
+```
+
+### After (agent-skills/my-skill/SKILL.md)
+
+```markdown
+---
+name: my-skill
+description: AI skill for data processing
+---
+
+# My Skill
+
+This skill does amazing things.
+```
+
+The wrapper directory is created in `~/.tank/agent-skills/` and symlinked to agent directories.
+
+### Custom Frontmatter
+
+If `SKILL.md` already has frontmatter, Tank uses it as-is:
+
+```markdown
+---
+name: my-custom-skill
+description: Custom description
+author: Alice Developer
+version: 1.0.0
+---
+
+# My Custom Skill
+```
+
+No wrapper is created; the skill directory is linked directly.
+
+## Symlink Structure
+
+### Development Linking
+
+```
+~/my-skill/                     # Your skill directory
+  ├── skills.json
+  └── SKILL.md
+
+~/.tank/
+  ├── agent-skills/
+  │   └── my-skill/             # Wrapper with frontmatter
+  │       └── SKILL.md          # Generated frontmatter + content
+  └── links.json                # Link registry
+
+~/.config/opencode/skills/
+  └── my-skill -> ~/.tank/agent-skills/my-skill  # Symlink
+```
+
+### Global Installation Linking
+
+For globally installed skills:
+
+```
+~/.tank/
+  ├── skills/
+  │   └── @acme/
+  │       └── analytics/        # Extracted skill files
+  ├── agent-skills/
+  │   └── acme-analytics/       # Wrapper with frontmatter
+  └── links.json                # Link registry
+
+~/.config/opencode/skills/
+  └── acme-analytics -> ~/.tank/agent-skills/acme-analytics
+```
+
+## tank unlink
+
+Remove skill symlinks from all agent workspaces.
+
+```bash
+tank unlink
+```
+
+**Run from a skill directory** (directory containing `skills.json`).
+
+### Example Output
+
+```bash
+$ cd my-skill
+$ tank unlink
+✓ Unlinked my-skill from 3 agent(s)
+```
+
+### No Links Found
+
+If skill is not linked:
+
+```bash
+$ tank unlink
+ℹ No links found for my-skill
+```
+
+### Cleanup
+
+Unlinking:
+- Removes symlinks from agent directories
+- Deletes wrapper directory from `~/.tank/agent-skills/`
+- Updates `~/.tank/links.json`
+
+## Link Registry
+
+Tank tracks links in `~/.tank/links.json`:
+
+```json
+{
+  "links": {
+    "my-skill": {
+      "source": "dev",
+      "sourceDir": "/home/alice/my-skill",
+      "agents": ["opencode", "cursor", "windsurf"]
+    },
+    "@acme/analytics": {
+      "source": "global",
+      "sourceDir": "/home/alice/.tank/skills/@acme/analytics",
+      "agents": ["opencode"]
+    }
+  }
+}
+```
+
+### Link Sources
+
+- **dev** - Development link from local directory (`tank link`)
+- **global** - Global installation link (`tank install --global`)
+- **local** - Project installation link (`tank install`)
+
+## Automatic Linking
+
+Tank automatically links skills during installation:
+
+```bash
+$ tank install @acme/analytics
+⠹ Installing @acme/analytics@1.2.0...
+ℹ Linked to 2 agent(s)
+✓ Installed @acme/analytics@1.2.0
+```
+
+```bash
+$ tank install @acme/analytics --global
+⠹ Installing @acme/analytics@1.2.0...
+ℹ Linked to 3 agent(s)
+✓ Installed @acme/analytics@1.2.0
+```
+
+No need to run `tank link` manually after install.
+
+## Automatic Unlinking
+
+Tank automatically unlinks during removal:
+
+```bash
+$ tank remove @acme/analytics
+ℹ Unlinked from 2 agent(s)
+✓ Removed @acme/analytics
+```
+
+## Link Conflicts
+
+### Same Skill, Different Sources
+
+If you link a dev version while a global version is installed:
+
+```bash
+$ tank link
+⚠ - OpenCode (already linked)
+```
+
+Tank skips the link to avoid conflicts. To override:
+
+1. Unlink the existing link: `tank unlink` (from global install)
+2. Link your dev version: `tank link`
+
+### Scoped Packages
+
+Scoped packages (`@org/skill`) are symlinked with flattened names:
+
+```
+@acme/analytics → acme-analytics
+@org-name/processor → org-name-processor
+```
+
+This avoids filesystem issues with `@` and `/` in symlink names.
+
+## Testing Skills Locally
+
+Use `tank link` to test skills during development:
+
+```bash
+# 1. Create skill
+mkdir my-skill
+cd my-skill
+tank init
+
+# 2. Add SKILL.md
+echo '# My Skill\n\nTest skill.' > SKILL.md
+
+# 3. Link to agents
+tank link
+
+# 4. Test in agent (e.g., OpenCode)
+# Open OpenCode, skill should appear in skills list
+
+# 5. Make changes to SKILL.md
+# Changes are immediately visible (symlinked)
+
+# 6. Unlink when done
+tank unlink
+```
+
+## Agent Compatibility
+
+All agents must support the Tank skill format:
+
+- SKILL.md with frontmatter
+- `name` field in frontmatter
+- Optional `description`, `author`, `version` fields
+
+See [Skills](/concepts/skills) for skill format details.
+
+## Troubleshooting
+
+### Permission Denied
+
+```bash
+✗ Failed to link to opencode: EACCES: permission denied
+```
+
+**Fix:** Check directory permissions on `~/.config/opencode/skills/`.
+
+### Symlink Already Exists
+
+```bash
+⚠ - OpenCode (already linked)
+```
+
+**Fix:** Run `tank unlink` first, then `tank link` again.
+
+### No skills.json
+
+```bash
+✗ No skills.json found. Run this command from a skill directory.
+```
+
+**Fix:** Run `tank link` from a directory with `skills.json`, or run `tank init` first.
+
+### Agent Not Detected
+
+If Tank doesn't detect your agent:
+
+1. Check agent config directory exists:
+   ```bash
+   ls ~/.config/opencode/skills/
+   ```
+
+2. Manually verify agent detection:
+   ```bash
+   node -e "console.log(require('os').homedir())"
+   ```
+
+3. Check Tank's agent detection logic:
+   See `apps/cli/src/lib/agents.ts:10`
+
+## Link Failures (Non-Fatal)
+
+If linking fails for a specific agent, Tank continues:
+
+```bash
+✓ OpenCode
+✓ Cursor
+⚠ Failed to link to windsurf: ENOENT: no such file or directory
+✓ Linked my-skill to 2 agent(s)
+```
+
+This is non-fatal; skills are still available in successfully linked agents.

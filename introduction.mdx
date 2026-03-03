@@ -1,0 +1,133 @@
+---
+title: "Introduction"
+description: "Security-first package manager for AI agent skills — preventing supply chain attacks with versioning, lockfiles, and permissions"
+---
+
+<img src="/images/hero-banner.png" alt="Tank — Security-first package manager for AI agent skills" />
+
+## What is Tank?
+
+Tank is the **npm for AI agent skills** — a security-first package manager and registry that brings enterprise-grade dependency management to the AI agent ecosystem.
+
+AI coding agents (Claude Code, OpenAI Codex, Cursor) can be extended with **skills** — reusable packages that teach agents how to perform tasks. The ecosystem is growing explosively: 110,000+ installs in 4 days on one registry alone.
+
+But today's skill registries have **no versioning, no lockfiles, no permissions, and no security scanning**.
+
+## The ClawHavoc Incident
+
+In February 2026, **341 malicious skills (12% of ClawHub's marketplace)** were distributing Atomic Stealer malware — stealing credentials, API keys, SSH keys, and crypto wallets.
+
+This single incident exposed a critical gap: agent skills are **more dangerous** than traditional packages because they execute with the **agent's full authority** — reading any file, making API calls with your credentials, executing shell commands.
+
+The attack surface is fundamentally larger, and the consequences are more severe.
+
+## What Tank Prevents
+
+Tank would have stopped ClawHavoc. Here's how:
+
+<CardGroup cols={2}>
+  <Card title="Permission Enforcement" icon="shield-check">
+    Skills declare required permissions. Installation fails if any skill exceeds your permission budget.
+  </Card>
+  <Card title="6-Stage Security Scanning" icon="radar">
+    Every published skill undergoes AST analysis, injection detection, secrets scanning, and supply chain checks.
+  </Card>
+  <Card title="Deterministic Lockfiles" icon="lock">
+    SHA-512 integrity verification ensures you get exactly what you expect, every time.
+  </Card>
+  <Card title="Transparent Audit Scores" icon="chart-line">
+    0-10 score for every skill based on 8 weighted security checks. Set minimum thresholds.
+  </Card>
+</CardGroup>
+
+## The Tank Difference
+
+| Feature | Current Registries | Tank |
+|---------|-------------------|------|
+| Versioning | Git tags / none | **Semver with escalation detection** |
+| Lockfile | None | **`skills.lock` with SHA-512** |
+| Permissions | None | **Declared + enforced at install** |
+| Static analysis | Basic / none | **6-stage security pipeline** |
+| Audit score | None | **Transparent 0-10 score** |
+| Code signing | None | Planned (Sigstore) |
+| Sandbox | None | Planned (WASM) |
+
+## Core Features
+
+### skills.json — The Manifest
+
+Declare what your agent is allowed to do:
+
+```json skills.json
+{
+  "skills": {
+    "@vercel/next-skill": "^2.1.0",
+    "@community/seo-audit": "3.0.0"
+  },
+  "permissions": {
+    "network": { "outbound": ["*.anthropic.com"] },
+    "filesystem": { "read": ["./src/**"], "write": ["./output/**"] },
+    "subprocess": false
+  }
+}
+```
+
+If any skill exceeds the permission budget, installation fails. This single feature would have prevented ClawHavoc.
+
+### skills.lock — Deterministic Installs
+
+Auto-generated lockfile with:
+- Exact versions for every skill and transitive dependency
+- SHA-512 integrity hashes
+- Resolved permissions (union of all skills)
+- Audit scores
+
+Every machine gets exactly the same skills with the same hashes.
+
+### Enforced Semantic Versioning
+
+Unlike npm where semver is a social contract, Tank **enforces it** by analyzing what actually changed:
+
+- Bug fix → PATCH
+- New feature → MINOR  
+- Breaking change or new dangerous permission → MAJOR
+
+If a publisher tries to release a PATCH that adds network access, the publish is **rejected**.
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install Tank and set up your first project in 5 minutes.
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Detailed installation guide for all platforms and package managers.
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/skills">
+    Learn about skills, manifests, lockfiles, and permissions.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/cli/authentication">
+    Complete reference for all 16 Tank CLI commands.
+  </Card>
+</CardGroup>
+
+## Who Should Use Tank?
+
+<AccordionGroup>
+  <Accordion title="Development teams using AI agents" icon="users">
+    Need confidence that installed skills are safe and stable. Tank provides permission enforcement, security scanning, and deterministic installs.
+  </Accordion>
+  <Accordion title="Skill authors and publishers" icon="code">
+    Need a distribution channel with trust signals. Tank provides transparent audit scores, version enforcement, and a growing user base.
+  </Accordion>
+  <Accordion title="Enterprise security teams" icon="shield">
+    Need governance over agent capabilities with audit trails. Tank provides permission budgets, security scores, and comprehensive logging.
+  </Accordion>
+  <Accordion title="Open-source community" icon="heart">
+    Needs shared infrastructure raising the security bar. Tank is MIT-licensed and built in the open from day one.
+  </Accordion>
+</AccordionGroup>
+
+<Note>
+  **Tank MVP is code-complete** with 461 tests passing. We're building in the open — see our [roadmap](https://github.com/tankpkg/tank/blob/main/docs/roadmap.md) for what's next.
+</Note>

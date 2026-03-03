@@ -1,0 +1,419 @@
+---
+title: Installation Commands
+description: Install, update, and remove skills with Tank CLI
+---
+
+# Installation Commands
+
+Installation commands manage skill dependencies in your project or globally.
+
+## tank install
+
+Install a skill from the Tank registry.
+
+```bash
+tank install <name> [version-range]
+```
+
+### Examples
+
+```bash
+# Install latest version
+tank install @acme/analytics
+
+# Install specific version range
+tank install @acme/analytics@^1.0.0
+tank install @acme/analytics@~2.1.0
+tank install @acme/analytics@1.2.3
+
+# Install all skills from skills.json
+tank install
+```
+
+### Installation Flow
+
+1. Resolve version using semver range
+2. Fetch skill metadata from registry
+3. Verify permission budget (if defined in `skills.json`)
+4. Download tarball from signed URL
+5. **Verify SHA-512 integrity hash**
+6. Extract with security filters
+7. Update `skills.json` and `skills.lock`
+8. Link to installed AI agents (if detected)
+
+### Example Output
+
+```bash
+$ tank install @acme/analytics
+⠹ Resolving versions...
+⠹ Fetching @acme/analytics@1.2.0...
+⠹ Downloading @acme/analytics@1.2.0...
+⠹ Verifying integrity...
+⠹ Extracting @acme/analytics@1.2.0...
+ℹ Linked to 2 agent(s)
+✓ Installed @acme/analytics@1.2.0
+```
+
+### Options
+
+#### --global
+
+Install skill globally instead of in current project.
+
+```bash
+tank install @acme/analytics --global
+```
+
+Global skills are stored in `~/.tank/skills/` and available to all agents.
+
+## Version Resolution
+
+Tank uses semantic versioning (semver) to resolve versions:
+
+```bash
+# Caret (^) - Compatible with version (same major)
+tank install skill@^1.2.3   # Matches 1.2.3, 1.3.0, 1.9.9 (not 2.0.0)
+
+# Tilde (~) - Approximately equivalent (same minor)
+tank install skill@~1.2.3   # Matches 1.2.3, 1.2.4, 1.2.9 (not 1.3.0)
+
+# Exact version
+tank install skill@1.2.3    # Only matches 1.2.3
+
+# Latest (default)
+tank install skill          # Latest published version
+tank install skill@*        # Explicit wildcard
+```
+
+See source: `packages/shared/src/resolver.ts`
+
+## Install from Lockfile
+
+Run `tank install` without arguments to install all skills from `skills.lock`:
+
+```bash
+$ tank install
+⠹ Installing from lockfile...
+✓ Installed 3 skills from lockfile
+```
+
+This ensures deterministic installs across environments (CI/CD, team members).
+
+## Integrity Checks
+
+During installation, Tank verifies tarball integrity:
+
+```typescript
+const hash = crypto.createHash('sha512')
+  .update(tarballBuffer)
+  .digest('base64');
+const computedIntegrity = `sha512-${hash}`;
+
+if (computedIntegrity !== metadata.integrity) {
+  throw new Error('Integrity mismatch');
+}
+```
+
+See source: `apps/cli/src/commands/install.ts:244`
+
+If integrity fails:
+
+```bash
+✗ Integrity mismatch for @acme/analytics@1.2.0
+  Expected: sha512-abc123...
+  Got: sha512-def456...
+```
+
+This prevents:
+- Tampered packages
+- Corrupted downloads
+- Man-in-the-middle attacks
+
+## Security Filters
+
+Tank extracts tarballs with strict security filters:
+
+### Rejected Entries
+
+- **Absolute paths** - `/etc/passwd`
+- **Path traversal** - `../../etc/passwd`
+- **Symlinks** - `link -> /etc/passwd`
+- **Hard links** - Physical links to other files
+
+See source: `apps/cli/src/commands/install.ts:552`
+
+### Size Limits
+
+- **Max uncompressed size:** 100 MB
+- Enforced during extraction
+
+## Permission Budget
+
+If `skills.json` defines a permission budget, Tank verifies the skill fits within it:
+
+```json
+{
+  "permissions": {
+    "network": {
+      "outbound": ["*.example.com"]
+    },
+    "filesystem": {
+      "read": ["./data/**"],
+      "write": []
+    },
+    "subprocess": false
+  }
+}
+```
+
+If a skill requests permissions outside the budget:
+
+```bash
+✗ Permission denied: @acme/analytics requests network access to "api.acme.com",
+  which is not in the project's permission budget
+```
+
+See source: `apps/cli/src/commands/install.ts:592`
+
+## Audit Score Threshold
+
+Set minimum audit score in `skills.json`:
+
+```json
+{
+  "audit": {
+    "min_score": 7.0
+  }
+}
+```
+
+If installed skill's audit score is below threshold:
+
+```bash
+✗ Audit score 4.2 for @acme/analytics is below minimum threshold 7.0
+  defined in skills.json
+```
+
+See source: `apps/cli/src/commands/install.ts:216`
+
+## tank update
+
+Update one or all skills to the latest compatible version.
+
+```bash
+# Update single skill
+tank update @acme/analytics
+
+# Update all skills
+tank update
+```
+
+### Update Flow
+
+1. Read version range from `skills.json`
+2. Fetch available versions from registry
+3. Resolve latest compatible version
+4. Compare with lockfile version
+5. If newer version exists, install it
+
+### Example Output
+
+```bash
+$ tank update @acme/analytics
+⠹ Resolving versions...
+⠹ Fetching @acme/analytics@1.3.0...
+✓ Updated @acme/analytics to 1.3.0
+```
+
+```bash
+$ tank update @acme/analytics
+ℹ Already at latest: @acme/analytics@1.3.0
+```
+
+### Update All
+
+```bash
+$ tank update
+⠹ Resolving versions...
+✓ Updated 2 skills
+```
+
+```bash
+$ tank update
+ℹ All skills up to date
+```
+
+### Global Updates
+
+Update globally installed skills:
+
+```bash
+tank update --global             # Update all global skills
+tank update @acme/analytics --global  # Update single global skill
+```
+
+## tank remove
+
+Remove a skill from the project.
+
+```bash
+tank remove <name>
+```
+
+### Examples
+
+```bash
+tank remove @acme/analytics
+tank remove @acme/analytics --global
+```
+
+### Removal Flow
+
+1. Remove skill from `skills.json`
+2. Remove all matching entries from `skills.lock`
+3. Unlink from installed agents
+4. Delete skill directory from `.tank/skills/`
+
+### Example Output
+
+```bash
+$ tank remove @acme/analytics
+ℹ Unlinked from 2 agent(s)
+✓ Removed @acme/analytics
+```
+
+### Global Removal
+
+```bash
+$ tank remove @acme/analytics --global
+ℹ Unlinked from 3 agent(s)
+✓ Removed @acme/analytics (global)
+```
+
+### Errors
+
+```bash
+$ tank remove unknown-skill
+✗ Skill "unknown-skill" is not installed (not found in skills.json)
+```
+
+## Installation Locations
+
+### Project Installation
+
+```
+my-project/
+├── skills.json
+├── skills.lock
+└── .tank/
+    ├── skills/
+    │   └── @acme/
+    │       └── analytics/      # Extracted skill files
+    └── agent-skills/
+        └── acme-analytics/     # Agent-ready wrapper
+```
+
+### Global Installation
+
+```
+~/.tank/
+├── config.json
+├── skills.lock
+├── skills/
+│   └── @acme/
+│       └── analytics/          # Extracted skill files
+└── agent-skills/
+    └── acme-analytics/         # Agent-ready wrapper
+```
+
+## Agent Linking
+
+After installation, Tank automatically links skills to detected agents:
+
+```bash
+ℹ Linked to 2 agent(s)
+```
+
+Supported agents:
+- OpenCode
+- Cursor
+- Windsurf
+- Cline
+- Continue
+
+See [Linking Commands](/cli/linking) for details.
+
+## Lockfile Format
+
+The `skills.lock` file ensures deterministic installs:
+
+```json
+{
+  "lockfileVersion": 1,
+  "skills": {
+    "@acme/analytics@1.2.0": {
+      "resolved": "https://storage.tank.dev/tarballs/abc123.tgz",
+      "integrity": "sha512-abc123...",
+      "permissions": {
+        "network": { "outbound": ["api.acme.com"] },
+        "filesystem": { "read": [], "write": [] },
+        "subprocess": false
+      },
+      "audit_score": 8.5
+    }
+  }
+}
+```
+
+### Key Properties
+
+- **resolved** - Download URL (signed, time-limited)
+- **integrity** - SHA-512 hash for verification
+- **permissions** - Declared permissions from manifest
+- **audit_score** - Security score (0-10, null if pending)
+
+### Determinism
+
+- Keys are **sorted alphabetically**
+- Trailing newline enforced
+- Consistent indentation (2 spaces)
+
+This ensures lockfile diffs are minimal and git-friendly.
+
+## Troubleshooting
+
+### Network Errors
+
+```bash
+✗ Network error fetching versions: ENOTFOUND
+```
+
+**Fix:** Check internet connection and registry URL in `~/.tank/config.json`.
+
+### Permission Budget Violation
+
+```bash
+✗ Permission denied: skill requests subprocess access,
+  but project budget does not allow it
+```
+
+**Fix:** Update `permissions.subprocess` in `skills.json` or choose a different skill.
+
+### Audit Score Too Low
+
+```bash
+⚠ Audit score 3.5 for skill is below minimum threshold 7.0
+```
+
+**Fix:** Lower `audit.min_score` in `skills.json` or contact skill author to address security issues.
+
+### Skill Not Found
+
+```bash
+✗ Skill not found or no access: @acme/analytics
+```
+
+**Fix:**
+- Verify skill name is correct
+- Run `tank login` if private skill
+- Check organization membership for scoped packages

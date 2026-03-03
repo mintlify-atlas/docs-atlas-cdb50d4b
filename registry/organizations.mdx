@@ -1,0 +1,364 @@
+---
+title: 'Organizations'
+description: 'Create organizations, manage team members, and publish skills under a shared namespace'
+---
+
+# Organizations
+
+Organizations allow teams to collaborate on skill development and publish under a shared namespace (e.g., `@acme/skill-name`).
+
+## Creating an Organization
+
+### Via Web UI
+
+1. Navigate to [tankpkg.dev/orgs](https://tankpkg.dev/orgs)
+2. Click **"Create Organization"**
+3. Fill in the form:
+
+   - **Organization Name**: Display name (e.g., "Acme Corp")
+   - **Slug**: URL-safe identifier (e.g., "acme-corp")
+     - Auto-generated from name
+     - Lowercase letters, numbers, hyphens only
+     - Max 39 characters
+     - Cannot start/end with hyphen
+
+4. Click **"Create"**
+
+**Validation Rules:**
+
+```typescript
+const SLUG_REGEX = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/;
+const MAX_SLUG_LENGTH = 39;
+```
+
+**Example:**
+
+```tsx
+// Input
+Name: "My Team"
+Slug: "my-team" (auto-generated)
+
+// Result
+Organization URL: https://tankpkg.dev/orgs/my-team
+Skill namespace: @my-team/*
+```
+
+### Via API
+
+```bash
+curl -X POST https://tankpkg.dev/api/v1/orgs \
+  -H "Authorization: Bearer tank_abc123..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Acme Corp",
+    "slug": "acme-corp"
+  }'
+```
+
+**Response:**
+
+```json
+{
+  "id": "org_xyz789",
+  "name": "Acme Corp",
+  "slug": "acme-corp",
+  "createdAt": "2026-03-03T12:00:00Z"
+}
+```
+
+## Organization Dashboard
+
+View your organization at `/orgs/{slug}`:
+
+```
+https://tankpkg.dev/orgs/acme-corp
+```
+
+**Dashboard Sections:**
+
+1. **Header**
+   - Organization name and slug
+   - Creation date
+   - Member count
+
+2. **Members Table**
+   - Name, email, role columns
+   - Invite/remove actions
+   - Owner badge for creators
+
+3. **Published Skills**
+   - List of skills under `@org-slug/*` namespace
+   - Total downloads and stars
+
+## Managing Members
+
+### Inviting Members
+
+1. Navigate to your organization page
+2. Click **"Invite Member"**
+3. Enter the user's email address
+4. Select role: `member` or `owner`
+5. Click **"Send Invitation"**
+
+**Server Action:**
+
+```typescript
+// apps/web/app/(dashboard)/orgs/actions.ts
+export async function inviteMember(data: {
+  organizationId: string;
+  email: string;
+  role: 'member';
+}) {
+  const result = await auth.api.createInvitation({
+    body: {
+      email: data.email,
+      role: data.role,
+      organizationId: data.organizationId,
+    },
+    headers: reqHeaders,
+  });
+  return result;
+}
+```
+
+**Invitation Flow:**
+
+1. System sends email to invitee (via Resend)
+2. Invitee clicks link in email
+3. Redirected to `/orgs/accept-invitation?id={invitation_id}`
+4. Invitee logs in (if not authenticated)
+5. Clicks "Accept" to join organization
+6. Redirected to organization dashboard
+
+### Accepting Invitations
+
+Invitees receive an email with a link:
+
+```
+https://tankpkg.dev/orgs/accept-invitation?id=inv_abc123
+```
+
+**Acceptance Page:**
+
+```tsx
+// apps/web/app/(dashboard)/orgs/accept-invitation/page.tsx
+export default function AcceptInvitationPage() {
+  const searchParams = useSearchParams();
+  const invitationId = searchParams.get('id');
+
+  const handleAccept = async () => {
+    await acceptInvitation(invitationId);
+    // Redirect to organization page
+  };
+
+  return (
+    <div>
+      <h1>Join Organization</h1>
+      <Button onClick={handleAccept}>Accept Invitation</Button>
+    </div>
+  );
+}
+```
+
+### Removing Members
+
+1. Navigate to organization members table
+2. Click **"Remove"** next to member's name
+3. Confirm removal (members cannot remove owners)
+
+**Server Action:**
+
+```typescript
+export async function removeMember(data: {
+  organizationId: string;
+  memberIdOrEmail: string;
+}) {
+  const result = await auth.api.removeMember({
+    body: {
+      memberIdOrEmail: data.memberIdOrEmail,
+      organizationId: data.organizationId,
+    },
+    headers: reqHeaders,
+  });
+  return result;
+}
+```
+
+**Permissions:**
+
+- Only **owners** can remove members
+- Owners cannot remove other owners
+- Members cannot remove anyone
+
+## Publishing Under Organizations
+
+### Setting Organization in SKILL.md
+
+Update your skill's manifest to publish under an org:
+
+```json
+// SKILL.md
+{
+  "name": "@acme-corp/web-scraper",
+  "version": "1.0.0",
+  "description": "Extract data from web pages",
+  "organization": "acme-corp"
+}
+```
+
+**Naming Convention:**
+
+- Format: `@{org-slug}/{skill-name}`
+- Org slug must match exactly (case-insensitive)
+- Skill name follows same rules as standalone skills
+
+### Publishing via CLI
+
+```bash
+# Ensure you're a member of the organization
+tank publish
+
+# CLI validates:
+# 1. You're authenticated
+# 2. You're a member of the organization
+# 3. Organization exists
+# 4. Skill name matches @org-slug/* pattern
+```
+
+**Authorization Check:**
+
+```typescript
+// apps/web/app/api/v1/skills/route.ts (excerpt)
+const orgSlugFromName = name.startsWith('@') 
+  ? name.split('/')[0].slice(1) 
+  : null;
+
+if (orgSlugFromName) {
+  const membership = await db
+    .select()
+    .from(member)
+    .innerJoin(organization, eq(organization.id, member.organizationId))
+    .where(
+      and(
+        eq(member.userId, verified.userId),
+        eq(organization.slug, orgSlugFromName)
+      )
+    )
+    .limit(1);
+
+  if (membership.length === 0) {
+    return NextResponse.json(
+      { error: 'You are not a member of this organization' },
+      { status: 403 }
+    );
+  }
+}
+```
+
+### Viewing Organization Skills
+
+All skills published under an org appear in:
+
+1. **Organization Dashboard**: `/orgs/{slug}`
+2. **Skill Search**: Filter by `@{org-slug}`
+3. **User Profile**: If member, shows "Published under {org-name}"
+
+## Organization Roles
+
+### Owner
+
+**Permissions:**
+
+- Invite members
+- Remove members (except other owners)
+- Publish skills under org namespace
+- Update organization settings (future)
+- Delete organization (future)
+
+**Auto-assigned:**
+
+- User who creates the organization becomes first owner
+
+### Member
+
+**Permissions:**
+
+- Publish skills under org namespace
+- View organization dashboard
+- View other members
+
+**Cannot:**
+
+- Invite or remove members
+- Change organization settings
+- Delete organization
+
+## Organization Limits
+
+**Current Limits:**
+
+- **Organizations per user**: Unlimited
+- **Members per organization**: Unlimited
+- **Skills per organization**: Unlimited
+- **Invitations**: 100 pending per organization
+
+**Rate Limits:**
+
+- **Create organization**: 10 per hour per user
+- **Invite member**: 50 per hour per organization
+- **Remove member**: 100 per hour per organization
+
+## Best Practices
+
+### Naming
+
+- Choose a slug that matches your company/team name
+- Avoid generic names (e.g., "tools", "utils")
+- Use kebab-case for multi-word names
+- Reserve your slug early (first-come, first-served)
+
+### Member Management
+
+- Invite members with company email addresses
+- Promote trusted members to owner for redundancy
+- Remove members when they leave your team
+- Use service accounts for CI/CD (see [API Keys](/registry/api-keys))
+
+### Skill Publishing
+
+- Prefix all org skills with `@{org-slug}/`
+- Use consistent naming: `@acme/skill-feature-name`
+- Document org-specific conventions in a shared README
+- Coordinate version bumps across related skills
+
+## Troubleshooting
+
+### "Slug already taken"
+
+**Cause**: Another organization registered that slug first.
+
+**Solution**: Choose a different slug (e.g., append `-team` or `-labs`).
+
+### "Not a member of this organization"
+
+**Cause**: You're trying to publish under an org you don't belong to.
+
+**Solution**:
+
+1. Ask an owner to invite you
+2. Accept the invitation
+3. Try publishing again
+
+### "Invitation expired"
+
+**Cause**: Invitations expire after 7 days.
+
+**Solution**: Ask an owner to send a new invitation.
+
+---
+
+**Next Steps:**
+
+- [Generate API keys for CI/CD](/registry/api-keys)
+- [Configure enterprise SSO](/registry/enterprise)
+- [Publish your first org skill](/cli/publishing)

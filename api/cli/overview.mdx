@@ -1,0 +1,113 @@
+---
+title: CLI Overview
+description: Tank CLI command reference - security-first package manager for AI agent skills
+---
+
+The `tank` CLI is a security-first package manager for AI agent skills. It provides 17 commands organized into four categories: authentication, skill management, security, and utilities.
+
+## Installation
+
+```bash
+# macOS (Homebrew)
+brew install tank
+
+# Linux/macOS (GitHub releases)
+curl -fsSL https://tank.dev/install.sh | sh
+
+# Verify installation
+tank --version
+```
+
+## Command Categories
+
+### Authentication Commands
+
+Manage authentication with the Tank registry.
+
+- [`tank login`](/api/cli/auth-commands#login) - Authenticate via browser OAuth
+- [`tank logout`](/api/cli/auth-commands#logout) - Remove authentication token
+- [`tank whoami`](/api/cli/auth-commands#whoami) - Show current user
+
+### Skill Management Commands
+
+Install, publish, and manage AI agent skills.
+
+- [`tank init`](/api/cli/skill-commands#init) - Create new skills.json
+- [`tank install`](/api/cli/skill-commands#install) - Install skills from registry
+- [`tank update`](/api/cli/skill-commands#update) - Update skills to latest versions
+- [`tank remove`](/api/cli/skill-commands#remove) - Remove installed skills
+- [`tank publish`](/api/cli/skill-commands#publish) - Publish skill to registry
+- [`tank search`](/api/cli/skill-commands#search) - Search for skills
+- [`tank info`](/api/cli/skill-commands#info) - Show skill details
+- [`tank link`](/api/cli/skill-commands#link) - Link skill to agents (dev)
+- [`tank unlink`](/api/cli/skill-commands#unlink) - Remove skill symlinks
+
+### Security Commands
+
+Verify integrity and analyze security posture.
+
+- [`tank verify`](/api/cli/security-commands#verify) - Verify lockfile integrity
+- [`tank permissions`](/api/cli/security-commands#permissions) - Display resolved permissions
+- [`tank audit`](/api/cli/security-commands#audit) - Show security audit results
+- [`tank doctor`](/api/cli/security-commands#doctor) - Diagnose setup issues
+
+### Utility Commands
+
+- `tank upgrade` - Update tank CLI to latest version
+
+## Global Flags
+
+<ParamField path="--version" type="flag">
+  Display tank CLI version
+</ParamField>
+
+<ParamField path="--help" type="flag">
+  Show help for any command
+</ParamField>
+
+## Configuration
+
+Tank stores configuration in `~/.tank/config.json`:
+
+```json
+{
+  "registry": "https://tank.dev",
+  "token": "tank_...",
+  "user": {
+    "name": "...",
+    "email": "..."
+  }
+}
+```
+
+## Environment Variables
+
+<ParamField path="TANK_DEBUG" type="string" default="0">
+  Enable debug logging. Set to `1` to output structured logs via pino.
+</ParamField>
+
+<ParamField path="TANK_REGISTRY" type="string" default="https://tank.dev">
+  Override default registry URL.
+</ParamField>
+
+## Exit Codes
+
+- `0` - Success
+- `1` - Command failed (error message printed to stderr)
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/cli/auth-commands">
+    Login to Tank registry
+  </Card>
+  <Card title="Skill Commands" icon="box" href="/api/cli/skill-commands">
+    Install and manage skills
+  </Card>
+  <Card title="Security Commands" icon="shield" href="/api/cli/security-commands">
+    Verify and audit skills
+  </Card>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Install your first skill
+  </Card>
+</CardGroup>

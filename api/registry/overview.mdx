@@ -1,0 +1,175 @@
+---
+title: 'Registry API Overview'
+description: 'REST API for the Tank skill registry - base URL, versioning, and conventions'
+icon: 'api'
+---
+
+## Introduction
+
+The Tank Registry API is a RESTful HTTP API for publishing, discovering, and downloading AI agent skills. It powers the `tank` CLI and is available for integration with custom tooling.
+
+## Base URL
+
+All API endpoints are relative to the registry base URL:
+
+```
+https://registry.tank.dev/api/v1
+```
+
+For local development:
+
+```
+http://localhost:3000/api/v1
+```
+
+## API Versioning
+
+The API uses URL-based versioning with the `/v1` prefix. This ensures backward compatibility as the API evolves.
+
+- **Current version**: `v1`
+- **Stability**: Production-ready
+- **Breaking changes**: Will result in a new version (e.g., `/v2`)
+
+## Request Format
+
+All POST/PUT requests accept JSON payloads:
+
+```bash
+Content-Type: application/json
+```
+
+## Response Format
+
+All responses return JSON with appropriate HTTP status codes:
+
+- **2xx**: Success
+- **4xx**: Client errors (invalid input, auth required, not found)
+- **5xx**: Server errors
+
+### Success Response
+
+```json
+{
+  "name": "@tank/hello-world",
+  "version": "1.0.0",
+  "description": "A simple greeting skill"
+}
+```
+
+### Error Response
+
+```json
+{
+  "error": "Skill not found"
+}
+```
+
+Some endpoints include additional error details:
+
+```json
+{
+  "error": "Invalid manifest",
+  "details": {
+    "name": ["Required"],
+    "version": ["Must follow semver"]
+  }
+}
+```
+
+## Rate Limiting
+
+API keys have configurable rate limits:
+
+- **Default**: 1000 requests per day
+- **Headers**: Rate limit info included in responses
+
+```http
+X-RateLimit-Limit: 1000
+X-RateLimit-Remaining: 999
+X-RateLimit-Reset: 1640995200
+```
+
+## Pagination
+
+Endpoints that return lists support pagination:
+
+<ParamField query="page" type="integer" default="1">
+  Page number (1-indexed)
+</ParamField>
+
+<ParamField query="limit" type="integer" default="20">
+  Results per page (max 50)
+</ParamField>
+
+### Paginated Response
+
+```json
+{
+  "results": [...],
+  "page": 1,
+  "limit": 20,
+  "total": 42
+}
+```
+
+## Skill Visibility
+
+Skills can be `public` or `private`:
+
+- **Public**: Visible to all users, discoverable in search
+- **Private**: Only visible to publisher, organization members, or granted users
+
+Authenticated requests can access private skills if the user has permission.
+
+## Scoped Packages
+
+Skills can be scoped to organizations:
+
+- **Format**: `@org-slug/skill-name`
+- **Publishing**: Requires organization membership
+- **Example**: `@acme/internal-tools`
+
+## Health Check
+
+Check API availability:
+
+```bash
+GET /api/health
+```
+
+**Response**:
+
+```json
+{
+  "status": "ok"
+}
+```
+
+## Error Codes
+
+| Code | Meaning |
+|------|--------|
+| 400 | Bad Request - Invalid input or malformed JSON |
+| 401 | Unauthorized - Missing or invalid authentication |
+| 403 | Forbidden - Insufficient permissions |
+| 404 | Not Found - Resource does not exist |
+| 409 | Conflict - Resource already exists (e.g., version) |
+| 429 | Too Many Requests - Rate limit exceeded |
+| 500 | Internal Server Error - Server-side failure |
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Authentication" icon="key" href="/api/registry/authentication">
+    Learn how to authenticate with API keys
+  </Card>
+  <Card title="Skills API" icon="box" href="/api/registry/skills">
+    Publish and manage skills
+  </Card>
+  <Card title="Search API" icon="magnifying-glass" href="/api/registry/search">
+    Discover skills with full-text search
+  </Card>
+  <Card title="Security Scanning" icon="shield-check" href="/api/registry/security">
+    Understand security analysis endpoints
+  </Card>
+</CardGroup>

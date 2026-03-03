@@ -1,0 +1,291 @@
+---
+title: "Permissions Schema"
+description: "Runtime permission schema for Tank skills"
+---
+
+The permissions schema defines runtime capabilities for Tank skills. Permissions are declared in `skills.json`, locked in `skills.lock`, and enforced at runtime by the Tank sandbox.
+
+## Schema Overview
+
+Permissions follow a deny-by-default security model. Skills can only access resources explicitly granted in their permission declarations.
+
+### Root Fields
+
+<ParamField path="network" type="object">
+  Network access permissions.
+  
+  See [Network Permissions](#network-permissions) below.
+</ParamField>
+
+<ParamField path="filesystem" type="object">
+  Filesystem access permissions.
+  
+  See [Filesystem Permissions](#filesystem-permissions) below.
+</ParamField>
+
+<ParamField path="subprocess" type="boolean">
+  Allow spawning subprocesses.
+  
+  **Default:** `false`
+  
+  **Security Note:**
+  - High-risk permission
+  - Grants access to arbitrary system commands
+  - Should only be granted to trusted skills
+  - Triggers security warnings during `tank install`
+  
+  **Example:** `true`
+</ParamField>
+
+## Network Permissions
+
+Controls outbound network access to specific domains.
+
+<ParamField path="network.outbound" type="string[]">
+  Allowed outbound domains with glob pattern support.
+  
+  **Format:**
+  - Exact domains: `"api.example.com"`
+  - Wildcard subdomains: `"*.example.com"`
+  - All subdomains: `"**.example.com"`
+  
+  **Constraints:**
+  - Empty array or omitted = no network access
+  - Patterns are case-insensitive
+  - Ports are not supported (all ports allowed for matched domain)
+  
+  **Examples:**
+  ```json
+  {
+    "network": {
+      "outbound": [
+        "api.example.com",        // Exact match only
+        "*.cdn.example.com",      // One-level subdomain
+        "**.deep.example.com"     // Multi-level subdomains
+      ]
+    }
+  }
+  ```
+  
+  **Security Note:**
+  - Avoid overly broad patterns like `"*"` or `"*.com"`
+  - Be specific about required APIs
+  - Each domain increases attack surface
+</ParamField>
+
+## Filesystem Permissions
+
+Controls read and write access to files using glob patterns.
+
+<ParamField path="filesystem.read" type="string[]">
+  Allowed read paths with glob pattern support.
+  
+  **Format:**
+  - Patterns are relative to project root
+  - Supports standard glob syntax
+  - `**` matches nested directories
+  - `*` matches single path segment
+  
+  **Constraints:**
+  - Cannot read outside project root
+  - Paths are normalized (no `..` traversal)
+  - Symlinks are rejected during extraction
+  
+  **Examples:**
+  ```json
+  {
+    "filesystem": {
+      "read": [
+        "data/**/*.json",         // All JSON files in data/
+        "config/*.yaml",          // YAML files in config/ (not nested)
+        "input/**/*",             // All files in input/ tree
+        "README.md"               // Specific file
+      ]
+    }
+  }
+  ```
+  
+  **Security Note:**
+  - Prefer specific patterns over broad matches
+  - Avoid `**/*` unless necessary
+</ParamField>
+
+<ParamField path="filesystem.write" type="string[]">
+  Allowed write paths with glob pattern support.
+  
+  **Format:**
+  - Same glob syntax as `read`
+  - Patterns are relative to project root
+  - Creates parent directories if needed
+  
+  **Constraints:**
+  - Cannot write outside project root
+  - Write permission does NOT imply read permission
+  - Paths are normalized (no `..` traversal)
+  
+  **Examples:**
+  ```json
+  {
+    "filesystem": {
+      "write": [
+        "output/**/*",            // All files in output/ tree
+        "logs/*.log",             // Log files only
+        "cache/**/*.tmp"          // Temporary files
+      ]
+    }
+  }
+  ```
+  
+  **Security Note:**
+  - Write permissions are high-risk
+  - Can overwrite existing files
+  - Use narrowest patterns possible
+</ParamField>
+
+## Complete Examples
+
+### Minimal Permissions (Default)
+
+```json
+{}
+```
+
+No permissions granted. Skill runs in strict sandbox.
+
+### Read-Only Data Processing
+
+```json
+{
+  "filesystem": {
+    "read": ["data/**/*.csv", "config/schema.json"]
+  }
+}
+```
+
+Can read CSV files and schema, but cannot write or access network.
+
+### API Integration Skill
+
+```json
+{
+  "network": {
+    "outbound": ["api.example.com", "*.cdn.example.com"]
+  },
+  "filesystem": {
+    "read": ["config/api-keys.json"],
+    "write": ["cache/**/*.json"]
+  }
+}
+```
+
+Can call APIs, read credentials, and write cache files.
+
+### High-Privilege Build Tool
+
+```json
+{
+  "subprocess": true,
+  "filesystem": {
+    "read": ["src/**/*", "package.json"],
+    "write": ["dist/**/*", "build/**/*"]
+  },
+  "network": {
+    "outbound": ["registry.npmjs.org", "*.github.com"]
+  }
+}
+```
+
+Full build permissions: subprocesses, file I/O, package registries.
+
+## Permission Inheritance
+
+Skills inherit permissions from their dependencies:
+
+- **Union of permissions**: If skill A depends on skill B, effective permissions are A ∪ B
+- **Transitive**: Includes all transitive dependencies
+- **Visible during install**: `tank install` shows full permission tree
+- **User approval required**: New permissions trigger interactive prompt
+
+## Security Best Practices
+
+### For Skill Authors
+
+1. **Principle of Least Privilege**: Request minimum permissions needed
+2. **Specific Patterns**: Use narrow glob patterns, avoid wildcards
+3. **Document Rationale**: Explain why each permission is needed
+4. **Avoid subprocess**: Prefer native libraries over shelling out
+5. **Minimize network**: Only request required API domains
+
+### For Skill Users
+
+1. **Review Permissions**: Check before installing (`tank info <skill>`)
+2. **Audit Changes**: Review permission diffs during updates
+3. **Question Broad Access**: Scrutinize `subprocess` or `**/*` patterns
+4. **Trust but Verify**: Even trusted publishers can be compromised
+5. **Use Lockfiles**: Commit `skills.lock` to track permission changes
+
+## Runtime Enforcement
+
+Tank enforces permissions through:
+
+1. **Process Isolation**: Skills run in sandboxed processes
+2. **Filesystem Checks**: I/O operations validated against patterns
+3. **Network Filtering**: Outbound requests validated against domain list
+4. **Subprocess Blocking**: Exec calls rejected if `subprocess: false`
+5. **Audit Logging**: Permission violations logged for review
+
+### Violation Behavior
+
+When a skill violates permissions:
+
+- **Error thrown**: Operation fails immediately
+- **Logged**: Violation recorded in audit log
+- **Exit code 1**: Skill process terminates
+- **User notified**: Clear error message with permission needed
+
+## Admin Permission Types
+
+Additional permission types used in Tank registry administration:
+
+<ParamField path="userRole" type="enum">
+  User role in the Tank registry.
+  
+  **Values:**
+  - `user`: Standard user (default)
+  - `admin`: Platform administrator
+</ParamField>
+
+<ParamField path="userStatus" type="enum">
+  User account status.
+  
+  **Values:**
+  - `active`: Normal operation (default)
+  - `suspended`: Temporary restriction
+  - `banned`: Permanent restriction
+</ParamField>
+
+<ParamField path="skillStatus" type="enum">
+  Skill package status.
+  
+  **Values:**
+  - `active`: Available for installation (default)
+  - `deprecated`: Still available, but not recommended
+  - `quarantined`: Hidden from search, existing installs blocked
+  - `removed`: Permanently deleted
+</ParamField>
+
+<ParamField path="adminAction" type="enum">
+  Administrative actions for audit logging.
+  
+  **Values:**
+  - `user.ban`, `user.suspend`, `user.unban`, `user.promote`, `user.demote`
+  - `skill.quarantine`, `skill.remove`, `skill.deprecate`, `skill.restore`, `skill.feature`, `skill.unfeature`
+  - `org.suspend`, `org.member.remove`, `org.delete`
+</ParamField>
+
+## Related
+
+- [skills.json Schema](/api/schemas/skills-json) - Declare permissions in manifest
+- [skills.lock Schema](/api/schemas/skills-lock) - Locked permissions in lockfile
+- [CLI: tank install](/cli/install) - Review permissions during install
+- [CLI: tank audit](/cli/audit) - Audit skill security

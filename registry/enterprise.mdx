@@ -1,0 +1,509 @@
+---
+title: 'Enterprise Deployment'
+description: 'Configure OIDC SSO and deploy Tank registry on-premises for enterprise environments'
+---
+
+# Enterprise Deployment
+
+Tank supports enterprise deployments with OIDC single sign-on, on-premises hosting, and air-gapped environments.
+
+## Architecture (Self-Hosted)
+
+```text
+                    +-------------------+
+                    |   Enterprise IdP  |
+                    | (Okta / Azure AD) |
+                    +---------+---------+
+                              |
+                              | OIDC
+                              v
++-----------------------------+------------------------------+
+|                          Tank Web                          |
+|                  (Next.js + Better Auth)                  |
++-----------+----------------+----------------+-------------+
+            |                |                |
+            | SQL            | sessions       | signed URLs
+            v                v                v
+     +------+-------+   +----+----+    +-----+------+
+     |  PostgreSQL  |   | Redis  |    | MinIO / S3 |
+     +--------------+   +---------+    +------------+
+            |
+            | version metadata + scan results
+            v
+     +------+---------------------+
+     | Python Security Scanner    |
+     | (FastAPI, 6-stage pipeline)|
+     +----------------------------+
+```
+
+## OIDC Single Sign-On
+
+### Supported Identity Providers
+
+- Okta
+- Azure Active Directory (Entra ID)
+- Google Workspace
+- Auth0
+- Any OpenID Connect compliant provider
+
+### Configuration
+
+Set environment variables in `.env` or `.env.local`:
+
+```bash
+# Authentication providers (comma-separated)
+AUTH_PROVIDERS="oidc"
+NEXT_PUBLIC_AUTH_PROVIDERS="oidc"
+
+# OIDC provider configuration
+OIDC_PROVIDER_ID="enterprise-oidc"  # Internal identifier
+OIDC_CLIENT_ID="tank-registry"      # From your IdP
+OIDC_CLIENT_SECRET="secret_xyz789"  # From your IdP
+
+# Option 1: Discovery URL (recommended)
+OIDC_DISCOVERY_URL="https://idp.example.com/.well-known/openid-configuration"
+
+# Option 2: Manual endpoints (fallback)
+OIDC_AUTHORIZATION_URL="https://idp.example.com/oauth2/authorize"
+OIDC_TOKEN_URL="https://idp.example.com/oauth2/token"
+OIDC_USER_INFO_URL="https://idp.example.com/oauth2/userinfo"
+```
+
+### Discovery URL vs Manual Endpoints
+
+**Discovery URL** (preferred):
+
+- Automatically fetches all OIDC endpoints
+- Self-healing if provider changes URLs
+- Standard OpenID Connect discovery
+
+```bash
+# Single variable needed
+OIDC_DISCOVERY_URL="https://accounts.google.com/.well-known/openid-configuration"
+```
+
+**Manual Endpoints** (fallback):
+
+- Explicit control over each endpoint
+- Required if IdP doesn't support discovery
+- More configuration overhead
+
+```bash
+OIDC_AUTHORIZATION_URL="https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
+OIDC_TOKEN_URL="https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+OIDC_USER_INFO_URL="https://graph.microsoft.com/oidc/userinfo"
+```
+
+### Better Auth Configuration
+
+The OIDC plugin is configured in `apps/web/lib/auth.ts`:
+
+```typescript
+import { betterAuth } from 'better-auth';
+import { oidc } from 'better-auth/plugins';
+
+export const auth = betterAuth({
+  database: db,
+  plugins: [
+    oidc({
+      providerId: process.env.OIDC_PROVIDER_ID ?? 'enterprise-oidc',
+      clientId: process.env.OIDC_CLIENT_ID ?? '',
+      clientSecret: process.env.OIDC_CLIENT_SECRET ?? '',
+      discoveryUrl: process.env.OIDC_DISCOVERY_URL,
+      // OR manual endpoints:
+      authorizationUrl: process.env.OIDC_AUTHORIZATION_URL,
+      tokenUrl: process.env.OIDC_TOKEN_URL,
+      userInfoUrl: process.env.OIDC_USER_INFO_URL,
+    }),
+  ],
+});
+```
+
+### IdP Configuration Examples
+
+#### Okta
+
+1. Create new App Integration (OIDC - Web Application)
+2. Set redirect URI: `https://tankpkg.example.com/api/auth/callback/oidc`
+3. Copy Client ID and Client Secret
+4. Get Discovery URL: `https://{org}.okta.com/.well-known/openid-configuration`
+
+```bash
+OIDC_PROVIDER_ID="okta"
+OIDC_CLIENT_ID="0oa...abc"
+OIDC_CLIENT_SECRET="secret_xyz"
+OIDC_DISCOVERY_URL="https://dev-12345.okta.com/.well-known/openid-configuration"
+```
+
+#### Azure AD (Entra ID)
+
+1. Register new App Registration
+2. Add redirect URI: `https://tankpkg.example.com/api/auth/callback/oidc`
+3. Create client secret in Certificates & Secrets
+4. Copy Application (client) ID and Directory (tenant) ID
+
+```bash
+OIDC_PROVIDER_ID="azure-ad"
+OIDC_CLIENT_ID="abc123-...-xyz789"
+OIDC_CLIENT_SECRET="secret_xyz"
+OIDC_DISCOVERY_URL="https://login.microsoftonline.com/{tenant-id}/v2.0/.well-known/openid-configuration"
+```
+
+#### Google Workspace
+
+1. Create OAuth 2.0 Client ID in Google Cloud Console
+2. Add authorized redirect URI: `https://tankpkg.example.com/api/auth/callback/oidc`
+3. Copy Client ID and Client Secret
+
+```bash
+OIDC_PROVIDER_ID="google"
+OIDC_CLIENT_ID="123456789-abc.apps.googleusercontent.com"
+OIDC_CLIENT_SECRET="GOCSPX-..."
+OIDC_DISCOVERY_URL="https://accounts.google.com/.well-known/openid-configuration"
+```
+
+### Login Flow
+
+1. User visits `https://tankpkg.example.com/login`
+2. Clicks "Sign in with {Provider}"
+3. Redirected to IdP authorization page
+4. User authenticates with corporate credentials
+5. IdP redirects back with authorization code
+6. Tank exchanges code for access token
+7. Fetches user info from IdP
+8. Creates/updates user in database
+9. Establishes session cookie
+
+**Session Management:**
+
+- Sessions stored in PostgreSQL (`session` table)
+- Optional Redis for session caching
+- Configurable expiration (default: 7 days)
+
+## On-Premises Deployment
+
+### Quick Start
+
+```bash
+# 1. Copy environment template
+cp .env.example.onprem .env
+
+# 2. Fill required values
+vim .env
+
+# 3. Start stack
+docker compose up -d --build
+
+# 4. Initialize database schema
+DATABASE_URL="postgresql://tank:...@localhost:5432/tank" \
+  ./scripts/onprem/init-db.sh
+
+# 5. Verify deployment
+./scripts/onprem/smoke-test.sh
+```
+
+### Docker Compose Stack
+
+```yaml
+services:
+  web:
+    build: ./apps/web
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT}
+      - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
+      - OIDC_CLIENT_ID=${OIDC_CLIENT_ID}
+      - OIDC_CLIENT_SECRET=${OIDC_CLIENT_SECRET}
+      - OIDC_DISCOVERY_URL=${OIDC_DISCOVERY_URL}
+    depends_on:
+      - postgres
+      - redis
+      - minio
+      - scanner
+
+  postgres:
+    image: postgres:17
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=tank
+      - POSTGRES_USER=tank
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis-data:/data
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+
+  scanner:
+    build: ./python-api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL}
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+```
+
+### Database Migrations
+
+Tank does **not** auto-run migrations on startup.
+
+**Development:**
+
+```bash
+# Generate migration after schema changes
+pnpm --filter=web drizzle-kit generate
+```
+
+**Deployment/Init:**
+
+```bash
+# Apply schema (force push)
+pnpm --filter=web exec drizzle-kit push --force
+```
+
+**Production:**
+
+Run migrations manually before deploying new versions:
+
+```bash
+# 1. Backup database
+pg_dump tank > backup.sql
+
+# 2. Apply migrations
+pnpm --filter=web exec drizzle-kit migrate
+
+# 3. Verify schema
+pnpm --filter=web exec drizzle-kit check
+```
+
+### Storage Backend
+
+Tank supports multiple storage providers:
+
+#### Supabase (Cloud)
+
+```bash
+SUPABASE_URL="https://xyz.supabase.co"
+SUPABASE_ANON_KEY="eyJhbG..."
+SUPABASE_SERVICE_ROLE_KEY="eyJhbG..."
+STORAGE_PROVIDER="supabase"
+```
+
+#### MinIO (Self-Hosted)
+
+```bash
+MINIO_ENDPOINT="http://minio:9000"
+MINIO_ACCESS_KEY="admin"
+MINIO_SECRET_KEY="password123"
+MINIO_BUCKET="tank-skills"
+STORAGE_PROVIDER="minio"
+```
+
+#### S3-Compatible
+
+```bash
+S3_ENDPOINT="https://s3.amazonaws.com"
+S3_REGION="us-east-1"
+S3_ACCESS_KEY="AKIAIOSFODNN7EXAMPLE"
+S3_SECRET_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+S3_BUCKET="tank-skills"
+STORAGE_PROVIDER="s3"
+```
+
+**Provider Abstraction:**
+
+```typescript
+// apps/web/lib/storage/provider.ts
+export interface StorageProvider {
+  upload(key: string, data: Buffer): Promise<void>;
+  download(key: string): Promise<Buffer>;
+  getSignedUrl(key: string, expiresIn: number): Promise<string>;
+  delete(key: string): Promise<void>;
+}
+
+export function getStorageProvider(): StorageProvider {
+  const provider = process.env.STORAGE_PROVIDER ?? 'supabase';
+  switch (provider) {
+    case 'minio': return new MinIOProvider();
+    case 's3': return new S3Provider();
+    default: return new SupabaseProvider();
+  }
+}
+```
+
+## Security Checklist
+
+### Secrets Management
+
+- **Use strong values** for `BETTER_AUTH_SECRET` (32+ bytes, cryptographically random)
+- **Rotate secrets regularly** (DB passwords, Redis, MinIO credentials)
+- **Store in secret manager** (HashiCorp Vault, Kubernetes Secrets, Docker Secrets)
+- **Never commit** `.env` files to version control
+
+### Network Segmentation
+
+- **Private network** for DB, Redis, MinIO, Scanner
+- **Expose only web app** through ingress/load balancer
+- **TLS termination** at load balancer (Let's Encrypt, corporate CA)
+- **Firewall rules** to restrict outbound scanner traffic
+
+### Authentication
+
+- **Enforce OIDC** for all user authentication (disable GitHub OAuth in production)
+- **MFA required** at IdP level
+- **Short session lifetimes** (default: 7 days, consider 1 day for high-security)
+- **IP allowlisting** for admin routes (optional)
+
+### Data Protection
+
+- **Snapshot/backup** PostgreSQL daily (automated via `pg_dump` cron)
+- **Replicate object storage** to secondary region
+- **Encrypt at rest** (PostgreSQL TDE, S3 SSE, MinIO encryption)
+- **Encrypt in transit** (TLS everywhere, no plaintext HTTP)
+
+### Audit Logging
+
+All admin actions logged to `audit_events` table:
+
+```sql
+CREATE TABLE audit_events (
+  id UUID PRIMARY KEY,
+  action TEXT NOT NULL,
+  actor_id UUID NOT NULL REFERENCES user(id),
+  target_type TEXT,
+  target_id TEXT,
+  metadata JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+```
+
+**Logged Actions:**
+
+- `api_key.create`, `api_key.revoke`
+- `skill.publish`, `skill.delete`
+- `user.promote_admin`, `user.disable`
+- `org.create`, `org.invite`, `org.remove_member`
+
+**Query Example:**
+
+```sql
+SELECT * FROM audit_events
+WHERE action LIKE 'skill.%'
+ORDER BY created_at DESC
+LIMIT 100;
+```
+
+### Scanner Isolation
+
+- **Restrict outbound internet** where possible (allow package registries if needed)
+- **Run in sandboxed container** (Docker, gVisor, Kata Containers)
+- **Resource limits** (CPU, memory, disk I/O)
+- **Timeout enforcement** (max 5 minutes per scan)
+
+## Observability
+
+### Logging
+
+Structured logs via Pino → Loki:
+
+```typescript
+// apps/web/lib/logger.ts
+import pino from 'pino';
+import pinoLoki from 'pino-loki';
+
+export const logger = pino(
+  {
+    level: process.env.LOG_LEVEL ?? 'info',
+  },
+  pinoLoki({
+    host: process.env.LOKI_HOST ?? 'http://localhost:3100',
+    labels: { app: 'tank-web' },
+  })
+);
+```
+
+**Grafana Dashboard:**
+
+```bash
+# Start Loki + Grafana
+docker compose -f infra/docker-compose.yml up -d
+
+# Access Grafana
+open http://localhost:3001
+```
+
+### Metrics
+
+**Next.js Built-in:**
+
+- Web Vitals (CLS, FID, LCP)
+- API route latencies
+- React Server Component timings
+
+**Custom Metrics:**
+
+```typescript
+// Track publish latency
+const start = Date.now();
+await publishSkill(manifest);
+logger.info({ latency: Date.now() - start }, 'skill.publish');
+```
+
+### Health Checks
+
+```bash
+GET /api/health
+```
+
+**Response:**
+
+```json
+{
+  "status": "ok",
+  "database": "connected",
+  "storage": "connected",
+  "scanner": "reachable"
+}
+```
+
+## Current Scope and Limitations
+
+**Implemented:**
+
+- Single-tenant env-driven OIDC SSO
+- On-premises deployment via Docker Compose
+- Pluggable storage backends (Supabase, MinIO, S3)
+- Audit logging for admin actions
+
+**Not Yet Implemented:**
+
+- Multi-tenant SSO (per-organization IdP config UI)
+- HA/multi-region replication
+- SAML 2.0 support (OIDC only)
+- Automated database migration runner
+- Built-in backup/restore tooling
+
+---
+
+**Next Steps:**
+
+- [Configure API keys for service accounts](/registry/api-keys)
+- [Set up organization namespaces](/registry/organizations)
+- [Review security best practices](/security/overview)

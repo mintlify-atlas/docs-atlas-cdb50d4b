@@ -1,0 +1,378 @@
+---
+title: Contributing Guide
+description: How to contribute to Tank
+---
+
+Thank you for your interest in contributing to Tank! Every contribution matters — whether it's fixing a typo, improving docs, reporting a bug, or building a feature.
+
+## Project Status
+
+Tank is **MVP code-complete** with 461 TypeScript tests and 16 Python tests passing. The most valuable contributions right now are:
+
+1. **Testing the CLI and web app** in real workflows
+2. **Opening issues** for bugs, edge cases, or missing features
+3. **Improving documentation** — clarity, examples, diagrams
+4. **Contributing security analysis rules** for the audit system
+
+## Getting Started
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) 24 or later
+- [pnpm](https://pnpm.io/) 10 or later (install via `corepack enable`)
+- [Python](https://python.org/) 3.14 or later (for security analysis)
+- A [Supabase](https://supabase.com/) project (for database)
+- A [GitHub OAuth App](https://github.com/settings/developers) (for authentication)
+
+### Development Setup
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/tankpkg/tank.git
+    cd tank
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    ```bash
+    corepack enable
+    pnpm install
+    ```
+  </Step>
+
+  <Step title="Configure environment">
+    ```bash
+    cp .env.example .env.local
+    ```
+    
+    Fill in the values — see `.env.example` for what's needed.
+  </Step>
+
+  <Step title="Push database schema">
+    ```bash
+    cd apps/web
+    npx drizzle-kit push
+    ```
+    
+    Requires `DATABASE_URL` in `.env.local`.
+  </Step>
+
+  <Step title="Start development server">
+    ```bash
+    pnpm dev --filter=web
+    ```
+  </Step>
+
+  <Step title="Run tests">
+    ```bash
+    pnpm test              # All tests (461 TypeScript + 16 Python)
+    pnpm test --filter=cli # CLI tests only
+    pnpm test --filter=web # Web tests only
+    ```
+  </Step>
+</Steps>
+
+See [Local Development Setup](/development/setup) for detailed instructions.
+
+## How to Contribute
+
+### Report a Bug
+
+Use the [Bug Report template](https://github.com/tankpkg/tank/issues/new?template=bug_report.yml) on GitHub. Include:
+
+- **Expected behavior** — What you thought would happen
+- **Actual behavior** — What actually happened
+- **Steps to reproduce** — How to trigger the bug
+- **Environment** — OS, Node version, Tank version
+
+### Suggest a Feature
+
+Open a [Feature Request](https://github.com/tankpkg/tank/issues/new?template=feature_request.yml) or start a [Discussion](https://github.com/tankpkg/tank/discussions).
+
+**Before opening:**
+- Check existing issues to avoid duplicates
+- Consider if it fits Tank's core mission (security-first package management)
+
+### Submit Code
+
+<Steps>
+  <Step title="Fork the repository">
+    Click "Fork" on the [Tank repository](https://github.com/tankpkg/tank).
+  </Step>
+
+  <Step title="Create a branch">
+    ```bash
+    git checkout -b feat/my-feature
+    ```
+    
+    Use conventional branch names:
+    - `feat/` — New feature
+    - `fix/` — Bug fix
+    - `docs/` — Documentation
+    - `chore/` — Tooling, config
+    - `test/` — Tests
+    - `refactor/` — Code refactoring
+  </Step>
+
+  <Step title="Make your changes">
+    Write clear, focused commits following the [Commit Message Guidelines](#commit-messages).
+  </Step>
+
+  <Step title="Push your branch">
+    ```bash
+    git push origin feat/my-feature
+    ```
+  </Step>
+
+  <Step title="Open a Pull Request">
+    Go to the Tank repository and click "Compare & pull request".
+  </Step>
+</Steps>
+
+## Pull Request Guidelines
+
+### Before Submitting
+
+- **Keep PRs focused** — One logical change per PR
+- **Update documentation** if your change affects user-facing behavior
+- **Add tests** for new functionality
+- **Ensure all checks pass** before requesting review
+- **Follow existing patterns** — Look at similar files for consistency
+
+### PR Description Template
+
+```markdown
+## Summary
+Brief description of what this PR does.
+
+## Changes
+- Bullet list of specific changes
+- Include file paths when relevant
+
+## Testing
+How did you test this? What commands did you run?
+
+## Related Issues
+Fixes #123
+```
+
+### Review Process
+
+1. Automated checks run (tests, linting)
+2. Maintainer reviews code
+3. Address feedback with new commits
+4. Once approved, maintainer merges
+
+## Commit Messages
+
+We use [Conventional Commits](https://www.conventionalcommits.org/):
+
+```bash
+feat: add permission budget validation
+fix: resolve lockfile hash mismatch on Windows
+docs: clarify semver enforcement rules
+chore: update CI workflow
+test: add integration tests for install command
+refactor: extract version resolution logic
+```
+
+### Types
+
+- `feat` — New feature
+- `fix` — Bug fix
+- `docs` — Documentation
+- `chore` — Tooling, dependencies, config
+- `test` — Tests
+- `refactor` — Code refactoring (no behavior change)
+- `perf` — Performance improvement
+- `ci` — CI/CD changes
+- `style` — Formatting (no code change)
+
+### Format
+
+```
+type(scope): subject
+
+[optional body]
+
+[optional footer]
+```
+
+**Examples:**
+
+```bash
+# Simple
+feat: add OIDC SSO support
+
+# With scope
+fix(cli): handle permission escalation on update
+
+# With body
+refactor(web): extract storage provider interface
+
+Creates an abstraction layer for storage backends,
+allowing on-prem deployments to use local filesystems
+instead of Supabase Storage.
+
+# With breaking change
+feat!: require Node.js 24+
+
+BREAKING CHANGE: Drop support for Node.js <24
+```
+
+## Coding Standards
+
+### TypeScript/JavaScript
+
+- **Strict TypeScript** — No `any`, no `@ts-ignore`, no `as any`
+- **TDD** — Write failing tests first (RED → GREEN → REFACTOR)
+- **ESM only** — `"type": "module"`, no `require()`
+- **2-space indent, LF line endings** — Enforced via `.editorconfig`
+- **Import paths** — Web app uses `@/*` alias, CLI uses relative `.js` extensions
+- **Test files** — `__tests__/*.test.ts` (never `.spec.ts`)
+
+### Web App
+
+- **Server Components by default** — `'use client'` only when needed
+- **Tailwind CSS v4** via `@tailwindcss/postcss`
+- **Zod for validation** — Never trust raw input
+- **Drizzle ORM** — Never raw SQL or Prisma
+- **react-doctor** — React linting (60+ rules)
+
+### Python
+
+- **Pydantic 2** for all models — Strict validation
+- **pytest** for testing — `test_*.py` pattern
+- **Type hints** on all functions
+
+### Anti-Patterns
+
+<Warning>
+  **Never do these:**
+  
+  - Suppress types with `as any`, `@ts-ignore`, `@ts-expect-error`
+  - Use `.spec.ts` (always `.test.ts`)
+  - Import between apps (CLI ↔ Web) — use `@tank/shared`
+  - Commit `.env.local` (contains secrets)
+  - Use `require()` (ESM only)
+  - Refactor while bugfixing (fix minimally)
+  - Create DB connections outside `lib/db.ts`
+  - Use Supabase for DB queries (Drizzle only)
+  - Modify `auth-schema.ts` manually (auto-generated)
+</Warning>
+
+## Project Structure
+
+```
+tank/
+├── apps/
+│   ├── cli/              # Tank CLI — Commander.js, 16 commands
+│   │   ├── bin/tank.ts   # Entry point
+│   │   └── src/
+│   │       ├── commands/ # 1-file-per-command pattern
+│   │       └── lib/      # API client, config, lockfile, packer
+│   └── web/              # Next.js 15 registry + API
+│       ├── app/          # App Router: (auth), (dashboard), (registry), api/
+│       ├── lib/          # DB, auth, storage, email, audit
+│       └── api-python/   # Python security scanner stubs
+├── packages/
+│   └── shared/           # Zod schemas, types, constants
+├── python-api/           # FastAPI security scanner
+│   └── lib/scan/         # 6-stage pipeline
+├── e2e/                  # End-to-end tests
+└── docs/                 # Product brief, architecture, roadmap
+```
+
+### Where to Look
+
+| Task | Location | Notes |
+|------|----------|-------|
+| Add CLI command | `apps/cli/src/commands/` | Export async fn, register in `bin/tank.ts` |
+| Add API endpoint | `apps/web/app/api/v1/` | Next.js Route Handler |
+| Add UI page | `apps/web/app/` | Route groups: `(auth)`, `(dashboard)`, `(registry)` |
+| Modify DB schema | `apps/web/lib/db/schema.ts` | Run `drizzle-kit generate` after |
+| Add shared type | `packages/shared/src/` | Export from `index.ts` |
+| Add UI component | `apps/web/components/ui/` | `npx shadcn add <component>` |
+| Modify scanner | `python-api/lib/scan/` | 6 stages: stage0–stage5 |
+
+## Testing
+
+### Running Tests
+
+```bash
+# All tests
+pnpm test
+
+# Specific workspace
+pnpm test --filter=cli
+pnpm test --filter=web
+pnpm test --filter=shared
+
+# E2E tests (needs .env.local)
+pnpm test:e2e
+
+# Performance tests (needs real DB)
+pnpm test:perf
+```
+
+### Writing Tests
+
+**TypeScript (Vitest):**
+
+```typescript
+import { describe, it, expect } from 'vitest';
+
+describe('feature', () => {
+  it('should do something', () => {
+    expect(true).toBe(true);
+  });
+});
+```
+
+**Python (pytest):**
+
+```python
+def test_feature():
+    assert True
+```
+
+### Test Guidelines
+
+- **TDD** — Write test first (RED → GREEN → REFACTOR)
+- **Descriptive names** — `should validate permissions` not `test1`
+- **One assertion per test** when possible
+- **Arrange, Act, Assert** pattern
+- **No side effects** — Tests should be independent
+
+## Code of Conduct
+
+This project follows the [Contributor Covenant Code of Conduct](https://github.com/tankpkg/tank/blob/main/CODE_OF_CONDUCT.md).
+
+**In short:**
+- Be respectful and inclusive
+- Focus on constructive feedback
+- Assume good intent
+- Report unacceptable behavior to conduct@tankpkg.dev
+
+## License
+
+By contributing, you agree that your contributions will be licensed under the [MIT License](https://github.com/tankpkg/tank/blob/main/LICENSE).
+
+## Questions?
+
+Open a [Discussion](https://github.com/tankpkg/tank/discussions) — there are no dumb questions.
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup" icon="wrench" href="/development/setup">
+    Set up your local development environment
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Understand the system design
+  </Card>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Learn how to run and write tests
+  </Card>
+</CardGroup>

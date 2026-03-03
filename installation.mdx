@@ -1,0 +1,571 @@
+---
+title: "Installation"
+description: "Install the Tank CLI on macOS, Linux, or Windows using npm, shell script, or standalone binary"
+---
+
+## Prerequisites
+
+Before installing Tank, ensure you have:
+
+<CardGroup cols={2}>
+  <Card title="Node.js 18+" icon="node-js">
+    Required for npm/pnpm/yarn installation methods.
+    [Download Node.js](https://nodejs.org/)
+  </Card>
+  <Card title="Git" icon="git">
+    Required for cloning repositories and publishing skills.
+    [Install Git](https://git-scm.com/)
+  </Card>
+</CardGroup>
+
+<Note>
+  The standalone binary does **not** require Node.js, but you'll need it to run most AI coding agents anyway.
+</Note>
+
+## Installation Methods
+
+<Tabs>
+  <Tab title="npm">
+    ### Install via npm
+
+    The most common installation method:
+
+    ```bash
+    npm install -g @tankpkg/cli
+    ```
+
+    Verify the installation:
+
+    ```bash
+    tank --version
+    # @tankpkg/cli@0.3.1
+    ```
+
+    <Tip>
+      Global install with `-g` makes the `tank` command available system-wide.
+    </Tip>
+
+    ### Update
+
+    ```bash
+    npm update -g @tankpkg/cli
+    ```
+
+    ### Uninstall
+
+    ```bash
+    npm uninstall -g @tankpkg/cli
+    ```
+  </Tab>
+
+  <Tab title="pnpm">
+    ### Install via pnpm
+
+    Fast, disk-efficient package manager:
+
+    ```bash
+    pnpm add -g @tankpkg/cli
+    ```
+
+    Verify the installation:
+
+    ```bash
+    tank --version
+    # @tankpkg/cli@0.3.1
+    ```
+
+    <Tip>
+      pnpm uses content-addressable storage, so multiple global packages share files efficiently.
+    </Tip>
+
+    ### Update
+
+    ```bash
+    pnpm update -g @tankpkg/cli
+    ```
+
+    ### Uninstall
+
+    ```bash
+    pnpm remove -g @tankpkg/cli
+    ```
+  </Tab>
+
+  <Tab title="Yarn">
+    ### Install via Yarn
+
+    ```bash
+    yarn global add @tankpkg/cli
+    ```
+
+    Verify the installation:
+
+    ```bash
+    tank --version
+    # @tankpkg/cli@0.3.1
+    ```
+
+    <Warning>
+      Yarn global commands may not be in your PATH by default. Add `~/.yarn/bin` to PATH if needed.
+    </Warning>
+
+    ### Update
+
+    ```bash
+    yarn global upgrade @tankpkg/cli
+    ```
+
+    ### Uninstall
+
+    ```bash
+    yarn global remove @tankpkg/cli
+    ```
+  </Tab>
+
+  <Tab title="Shell Script">
+    ### Install via shell script
+
+    One-line install (no Node.js required for runtime):
+
+    ```bash
+    curl -fsSL https://install.tankpkg.dev | bash
+    ```
+
+    Or with wget:
+
+    ```bash
+    wget -qO- https://install.tankpkg.dev | bash
+    ```
+
+    This script:
+    1. Detects your OS and architecture
+    2. Downloads the appropriate binary
+    3. Installs to `/usr/local/bin/tank` (requires sudo)
+    4. Verifies the installation
+
+    <Tip>
+      Review the script before running: `curl -fsSL https://install.tankpkg.dev`
+    </Tip>
+
+    ### Custom install location
+
+    ```bash
+    curl -fsSL https://install.tankpkg.dev | bash -s -- --prefix=$HOME/.local
+    ```
+
+    Ensure `$HOME/.local/bin` is in your PATH.
+  </Tab>
+
+  <Tab title="Binary">
+    ### Download standalone binary
+
+    Download the latest release for your platform:
+
+    <CardGroup cols={2}>
+      <Card title="macOS (Intel)" icon="apple">
+        ```bash
+        curl -LO https://github.com/tankpkg/tank/releases/latest/download/tank-macos-x64
+        chmod +x tank-macos-x64
+        sudo mv tank-macos-x64 /usr/local/bin/tank
+        ```
+      </Card>
+      <Card title="macOS (Apple Silicon)" icon="apple">
+        ```bash
+        curl -LO https://github.com/tankpkg/tank/releases/latest/download/tank-macos-arm64
+        chmod +x tank-macos-arm64
+        sudo mv tank-macos-arm64 /usr/local/bin/tank
+        ```
+      </Card>
+      <Card title="Linux (x64)" icon="linux">
+        ```bash
+        curl -LO https://github.com/tankpkg/tank/releases/latest/download/tank-linux-x64
+        chmod +x tank-linux-x64
+        sudo mv tank-linux-x64 /usr/local/bin/tank
+        ```
+      </Card>
+      <Card title="Windows (x64)" icon="windows">
+        Download from [GitHub Releases](https://github.com/tankpkg/tank/releases/latest)
+        
+        Add to PATH via System Properties.
+      </Card>
+    </CardGroup>
+
+    Verify the installation:
+
+    ```bash
+    tank --version
+    ```
+
+    <Note>
+      Binaries are built using Node.js SEA (Single Executable Application) — they're self-contained with no external dependencies.
+    </Note>
+  </Tab>
+</Tabs>
+
+## Platform-Specific Notes
+
+<AccordionGroup>
+  <Accordion title="macOS" icon="apple">
+    ### Homebrew (planned)
+
+    Homebrew formula is in progress:
+
+    ```bash
+    # Coming soon
+    brew install tankpkg/tap/tank
+    ```
+
+    ### Gatekeeper Warning
+
+    If you download the binary and macOS blocks it:
+
+    ```bash
+    xattr -d com.apple.quarantine /usr/local/bin/tank
+    ```
+
+    Or go to **System Preferences → Security & Privacy** and click **Allow Anyway**.
+
+    ### Shell Completion
+
+    Add to your `.zshrc` or `.bashrc`:
+
+    ```bash
+    # bash
+    eval "$(tank completion bash)"
+
+    # zsh
+    eval "$(tank completion zsh)"
+    ```
+  </Accordion>
+
+  <Accordion title="Linux" icon="linux">
+    ### Package Managers (planned)
+
+    Native packages for major distributions coming soon:
+
+    ```bash
+    # Debian/Ubuntu (planned)
+    sudo apt install tank
+
+    # Fedora/RHEL (planned)
+    sudo dnf install tank
+
+    # Arch (planned)
+    yay -S tank
+    ```
+
+    ### Permissions
+
+    If you don't have sudo access, install to user directory:
+
+    ```bash
+    mkdir -p ~/.local/bin
+    mv tank-linux-x64 ~/.local/bin/tank
+    chmod +x ~/.local/bin/tank
+    ```
+
+    Add to PATH in `~/.bashrc`:
+
+    ```bash
+    export PATH="$HOME/.local/bin:$PATH"
+    ```
+
+    ### Shell Completion
+
+    ```bash
+    # bash
+    tank completion bash > /etc/bash_completion.d/tank
+
+    # zsh
+    tank completion zsh > /usr/local/share/zsh/site-functions/_tank
+    ```
+  </Accordion>
+
+  <Accordion title="Windows" icon="windows">
+    ### PowerShell Installation
+
+    ```powershell
+    # Download binary
+    Invoke-WebRequest -Uri https://github.com/tankpkg/tank/releases/latest/download/tank-win-x64.exe -OutFile tank.exe
+
+    # Move to user bin
+    Move-Item tank.exe $env:USERPROFILE\bin\tank.exe
+
+    # Add to PATH (restart terminal after)
+    [Environment]::SetEnvironmentVariable("Path", $env:Path + ";$env:USERPROFILE\bin", "User")
+    ```
+
+    ### WSL (Windows Subsystem for Linux)
+
+    Use the Linux installation method inside WSL:
+
+    ```bash
+    npm install -g @tankpkg/cli
+    ```
+
+    ### Scoop (planned)
+
+    ```powershell
+    # Coming soon
+    scoop bucket add tankpkg https://github.com/tankpkg/scoop-bucket
+    scoop install tank
+    ```
+
+    ### Chocolatey (planned)
+
+    ```powershell
+    # Coming soon
+    choco install tank
+    ```
+  </Accordion>
+
+  <Accordion title="Docker" icon="docker">
+    ### Run in Docker
+
+    Use the official Docker image:
+
+    ```bash
+    docker pull tankpkg/tank:latest
+    ```
+
+    Run commands:
+
+    ```bash
+    docker run --rm -v $(pwd):/workspace tankpkg/tank install
+    ```
+
+    ### Create an alias
+
+    Add to `~/.bashrc` or `~/.zshrc`:
+
+    ```bash
+    alias tank='docker run --rm -v $(pwd):/workspace tankpkg/tank'
+    ```
+
+    Then use normally:
+
+    ```bash
+    tank install @vercel/next-skill
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Post-Installation
+
+<Steps>
+  <Step title="Verify installation">
+    ```bash
+    tank --version
+    ```
+
+    Expected output:
+    ```
+    @tankpkg/cli@0.3.1
+    ```
+  </Step>
+
+  <Step title="Check available commands">
+    ```bash
+    tank --help
+    ```
+
+    You should see all 16 commands:
+    ```
+    Usage: tank [options] [command]
+
+    Security-first package manager for AI agent skills
+
+    Commands:
+      login                          Authenticate via GitHub OAuth
+      logout                         Clear credentials
+      whoami                         Show current user info
+      init                           Create skills.json interactively
+      publish                        Pack and publish a skill
+      install [skill]                Install a specific skill
+      update [skill]                 Update within semver range
+      remove <skill>                 Remove a skill
+      verify                         Verify lockfile integrity
+      permissions                    Display resolved permission summary
+      audit [skill]                  Show security analysis results
+      search <query>                 Search the registry
+      info <skill>                   Show skill metadata
+      link                           Symlink skill into agent workspace
+      unlink                         Remove skill symlink
+      doctor                         Diagnose setup issues
+    ```
+  </Step>
+
+  <Step title="Authenticate">
+    ```bash
+    tank login
+    ```
+
+    See the [Quickstart](/quickstart) for detailed authentication steps.
+  </Step>
+
+  <Step title="Run diagnostics">
+    ```bash
+    tank doctor
+    ```
+
+    This checks:
+    - Config file exists and is valid
+    - Authentication status
+    - Network connectivity to registry
+    - Installed agent detection
+  </Step>
+</Steps>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found: tank" icon="terminal">
+    The CLI wasn't added to your PATH.
+
+    **npm/pnpm/yarn:**
+    - Check install location: `npm list -g @tankpkg/cli`
+    - Ensure npm global bin is in PATH:
+      ```bash
+      # Add to ~/.bashrc or ~/.zshrc
+      export PATH="$(npm config get prefix)/bin:$PATH"
+      ```
+
+    **Binary install:**
+    - Verify binary location: `which tank`
+    - Add to PATH:
+      ```bash
+      export PATH="/usr/local/bin:$PATH"
+      ```
+
+    **Restart your terminal** after modifying PATH.
+  </Accordion>
+
+  <Accordion title="Permission denied" icon="lock">
+    You don't have write access to the install directory.
+
+    **Option 1: Use sudo (Linux/macOS)**
+    ```bash
+    sudo npm install -g @tankpkg/cli
+    ```
+
+    **Option 2: Change npm prefix (recommended)**
+    ```bash
+    mkdir -p ~/.npm-global
+    npm config set prefix '~/.npm-global'
+    echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.bashrc
+    source ~/.bashrc
+    npm install -g @tankpkg/cli
+    ```
+  </Accordion>
+
+  <Accordion title="Version mismatch" icon="code-compare">
+    You have multiple versions installed.
+
+    **Find all installations:**
+    ```bash
+    which -a tank
+    npm list -g @tankpkg/cli
+    ```
+
+    **Remove old versions:**
+    ```bash
+    npm uninstall -g @tankpkg/cli
+    pnpm remove -g @tankpkg/cli
+    yarn global remove @tankpkg/cli
+    ```
+
+    Then reinstall using your preferred method.
+  </Accordion>
+
+  <Accordion title="SSL certificate errors" icon="certificate">
+    Network issues with npm registry or GitHub.
+
+    **Temporary workaround (not recommended for production):**
+    ```bash
+    npm config set strict-ssl false
+    npm install -g @tankpkg/cli
+    npm config set strict-ssl true
+    ```
+
+    **Better solution:**
+    - Update your CA certificates
+    - Check corporate proxy settings
+    - Use a VPN if on restricted network
+  </Accordion>
+</AccordionGroup>
+
+## Configuration
+
+Tank stores configuration in `~/.tank/config.json`:
+
+```json
+{
+  "registry": "https://registry.tankpkg.dev",
+  "token": "tank_...",
+  "user": {
+    "name": "your-username",
+    "email": "you@example.com"
+  }
+}
+```
+
+### Custom Registry
+
+Point to a private or on-premises registry:
+
+```bash
+TANK_REGISTRY=https://tank.company.internal tank install
+```
+
+Or set permanently:
+
+```bash
+export TANK_REGISTRY=https://tank.company.internal
+```
+
+### Debug Logging
+
+Enable detailed debug logs:
+
+```bash
+TANK_DEBUG=1 tank install @vercel/next-skill
+```
+
+Logs are sent to **Loki** (if configured) or stdout.
+
+## Upgrading from Beta
+
+If you installed Tank during the beta:
+
+```bash
+# Remove old version
+npm uninstall -g tank-cli
+
+# Install new package
+npm install -g @tankpkg/cli
+
+# Re-authenticate
+tank logout
+tank login
+```
+
+<Warning>
+  Beta lockfiles (`tank.lock`) are **not compatible** with v0.3+. Regenerate with `tank install`.
+</Warning>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get up and running in 5 minutes.
+  </Card>
+  <Card title="CLI Commands" icon="terminal" href="/cli/authentication">
+    Complete reference for all 16 commands.
+  </Card>
+  <Card title="Configuration" icon="gear" href="/concepts/manifest">
+    Learn about skills.json and lockfile format.
+  </Card>
+  <Card title="Troubleshooting" icon="life-ring" href="/quickstart#troubleshooting">
+    Common issues and solutions.
+  </Card>
+</CardGroup>

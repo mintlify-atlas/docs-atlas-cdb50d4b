@@ -1,0 +1,393 @@
+---
+title: 'Security Scanning API'
+description: 'Security analysis endpoints for detecting malicious skills'
+icon: 'shield-check'
+---
+
+## Overview
+
+Tank's security scanning pipeline analyzes skill packages for:
+
+- Prompt injection attacks
+- Credential exposure
+- Code execution risks
+- Supply chain vulnerabilities
+- Obfuscation patterns
+- Data exfiltration attempts
+
+Scanning is **automatic** during skill publish and powers the audit score (0-10).
+
+## Scan Pipeline
+
+The security scanner runs 6 stages:
+
+```
+Stage 0 → Stage 1 → Stage 2 → Stage 3 → Stage 4 → Stage 5
+INGEST   STRUCTURE   STATIC    INJECTION  SECRETS   SUPPLY
+```
+
+### Stage 0: Ingestion & Quarantine
+
+- Downloads tarball from signed URL
+- Extracts to isolated temp directory
+- Computes SHA-256 hash for each file
+- Validates tarball structure
+- Rejects encrypted archives
+- Rejects suspicious file paths
+
+### Stage 1: File & Structure Validation
+
+- Verifies required files (`skills.json`)
+- Enforces file count limit (&lt;1000 files)
+- Enforces size limit (&lt;50MB)
+- Blocks binary executables
+- Blocks compiled Python (`.pyc`, `.pyo`)
+- Validates file extensions
+
+### Stage 2: Static Code Analysis
+
+**Largest stage** with 550+ lines of analysis:
+
+- Python AST analysis
+- JavaScript pattern matching
+- Dangerous function calls (`eval`, `exec`, `compile`)
+- File system operations (suspicious paths)
+- Network operations (exfiltration patterns)
+- Subprocess spawning
+- Dynamic code generation
+- Obfuscation detection
+- Base64-encoded payloads
+- Suspicious imports
+
+### Stage 3: Prompt Injection Detection
+
+- Prompt injection patterns
+- System prompt extraction attempts
+- Role confusion attacks
+- Instruction override attempts
+- Multi-turn attack patterns
+- Unicode homoglyphs
+- Hidden instructions
+- Chain-of-thought manipulation
+
+### Stage 4: Secrets & Credential Scanning
+
+- API keys (various formats)
+- AWS credentials
+- GitHub tokens
+- Private keys (RSA, SSH)
+- Database connection strings
+- Password patterns
+- Generic secret patterns
+
+### Stage 5: Supply Chain Analysis
+
+- Dependency analysis
+- Known vulnerable packages
+- Package typosquatting detection
+- Dependency confusion attacks
+- Malicious package detection
+- Unpinned dependencies
+- Deprecated packages
+
+## Full Scan Endpoint
+
+**Endpoint**: `POST /api/analyze/scan`
+
+Runs the complete 6-stage pipeline. Called automatically by `/api/v1/skills/confirm`.
+
+<Warning>
+  This endpoint is for internal use. Publishers do not call it directly.
+</Warning>
+
+### Request
+
+<ParamField body="tarball_url" type="string" required>
+  Signed URL to download the tarball
+</ParamField>
+
+<ParamField body="version_id" type="string" required>
+  UUID of the skill version being scanned
+</ParamField>
+
+<ParamField body="manifest" type="object" required>
+  Skill manifest (skills.json content)
+</ParamField>
+
+<ParamField body="permissions" type="object" required>
+  Declared permissions from manifest
+</ParamField>
+
+```json
+{
+  "tarball_url": "https://storage.example.com/signed-url",
+  "version_id": "660e8400-e29b-41d4-a716-446655440001",
+  "manifest": {
+    "name": "@tank/hello-world",
+    "version": "1.0.0"
+  },
+  "permissions": {
+    "network": false
+  }
+}
+```
+
+### Response
+
+<ResponseField name="scan_id" type="string">
+  UUID of the scan result record (null if storage failed)
+</ResponseField>
+
+<ResponseField name="verdict" type="string">
+  Final verdict: `pass`, `pass_with_notes`, `flagged`, or `fail`
+</ResponseField>
+
+<ResponseField name="findings" type="array">
+  Deduplicated security findings
+  <Expandable>
+    <ResponseField name="stage" type="string">
+      Stage that found the issue (e.g., `stage2`, `stage3`)
+    </ResponseField>
+    <ResponseField name="severity" type="string">
+      `critical`, `high`, `medium`, or `low`
+    </ResponseField>
+    <ResponseField name="type" type="string">
+      Finding type (e.g., `prompt_injection`, `credential_exposure`)
+    </ResponseField>
+    <ResponseField name="description" type="string">
+      Human-readable description
+    </ResponseField>
+    <ResponseField name="location" type="string">
+      File path and line number (if applicable)
+    </ResponseField>
+    <ResponseField name="confidence" type="number">
+      Confidence score (0.0 to 1.0)
+    </ResponseField>
+    <ResponseField name="tool" type="string">
+      Analysis tool that found the issue
+    </ResponseField>
+    <ResponseField name="evidence" type="string">
+      Code snippet or evidence (if available)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="stage_results" type="array">
+  Per-stage execution details
+  <Expandable>
+    <ResponseField name="stage" type="string">
+      Stage identifier
+    </ResponseField>
+    <ResponseField name="status" type="string">
+      `passed`, `failed`, `errored`, or `skipped`
+    </ResponseField>
+    <ResponseField name="findings" type="array">
+      Findings from this stage
+    </ResponseField>
+    <ResponseField name="duration_ms" type="integer">
+      Stage execution time in milliseconds
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="duration_ms" type="integer">
+  Total scan duration in milliseconds
+</ResponseField>
+
+<ResponseField name="file_hashes" type="object">
+  SHA-256 hashes for each file (path → hash)
+</ResponseField>
+
+```json
+{
+  "scan_id": "770e8400-e29b-41d4-a716-446655440002",
+  "verdict": "pass",
+  "findings": [],
+  "stage_results": [
+    {
+      "stage": "stage0",
+      "status": "passed",
+      "findings": [],
+      "duration_ms": 1200
+    },
+    {
+      "stage": "stage1",
+      "status": "passed",
+      "findings": [],
+      "duration_ms": 50
+    }
+  ],
+  "duration_ms": 3500,
+  "file_hashes": {
+    "SKILL.md": "abc123...",
+    "index.ts": "def456..."
+  }
+}
+```
+
+## Lightweight Security Check
+
+**Endpoint**: `POST /api/analyze/security`
+
+Fast pattern-matching security check without full tarball download. Useful for pre-publish validation.
+
+### Request
+
+<ParamField body="skill_content" type="string" required>
+  File content to analyze
+</ParamField>
+
+<ParamField body="filename" type="string">
+  Filename for location reporting (optional)
+</ParamField>
+
+```json
+{
+  "skill_content": "const apiKey = 'sk-abc123';\neval(userInput);",
+  "filename": "index.ts"
+}
+```
+
+### Response
+
+<ResponseField name="safe" type="boolean">
+  `true` if no issues found
+</ResponseField>
+
+<ResponseField name="issues" type="array">
+  Detected security issues
+  <Expandable>
+    <ResponseField name="severity" type="string">
+      `critical` or `high`
+    </ResponseField>
+    <ResponseField name="type" type="string">
+      Issue type
+    </ResponseField>
+    <ResponseField name="description" type="string">
+      Human-readable description
+    </ResponseField>
+    <ResponseField name="location" type="string">
+      File and line number
+    </ResponseField>
+    <ResponseField name="line_number" type="integer">
+      Line number (1-indexed)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="summary" type="string">
+  Human-readable summary
+</ResponseField>
+
+<ResponseField name="method" type="string">
+  Analysis method (always `static_analysis`)
+</ResponseField>
+
+```json
+{
+  "safe": false,
+  "issues": [
+    {
+      "severity": "critical",
+      "type": "credential_exposure",
+      "description": "Hardcoded credential",
+      "location": "index.ts:1",
+      "line_number": 1
+    },
+    {
+      "severity": "critical",
+      "type": "code_execution",
+      "description": "Dynamic code execution",
+      "location": "index.ts:2",
+      "line_number": 2
+    }
+  ],
+  "summary": "Found 2 critical and 0 high severity issues.",
+  "method": "static_analysis"
+}
+```
+
+## Verdict Rules
+
+Verdicts are computed based on finding severity:
+
+| Condition | Verdict | Can Publish? |
+|-----------|---------|-------------|
+| 1+ critical findings | `fail` | No |
+| 4+ high findings | `fail` | No |
+| 1-3 high findings | `flagged` | Requires manual review |
+| Medium/low only | `pass_with_notes` | Yes (with warnings) |
+| No findings | `pass` | Yes |
+
+## Audit Score
+
+The audit score (0-10) is computed from 8 weighted checks:
+
+1. **SKILL.md present** (1 pt) — manifest name non-empty
+2. **Description present** (1 pt) — manifest description non-empty
+3. **Permissions declared** (1 pt) — permissions object not empty
+4. **No security issues** (2 pts) — no critical/high findings
+5. **Permission extraction match** (2 pts) — extracted ⊆ declared
+6. **File count reasonable** (1 pt) — fewer than 100 files
+7. **README documentation** (1 pt) — readme field non-empty
+8. **Package size reasonable** (1 pt) — tarball under 5 MB
+
+**Example Score**: 9/10 (missing README)
+
+## Scan Performance
+
+- **Average**: 3-5 seconds for typical skills
+- **Timeout**: 55 seconds (Vercel function limit)
+- **Parallelization**: Stages run sequentially (dependency chain)
+- **Budget-aware**: Skips later stages if timeout approaching
+
+## Finding Deduplication
+
+Multiple tools may detect the same issue. The scanner:
+
+1. Groups findings by `(type, location)`
+2. Keeps highest confidence score
+3. Boosts confidence for corroborated findings
+
+## Stored Results
+
+Scan results are stored in PostgreSQL:
+
+- **scan_results** table: Verdict, counts, duration, file hashes
+- **scan_findings** table: Individual findings with details
+
+Results are displayed in the skill detail page UI.
+
+## Error Handling
+
+### Graceful Degradation
+
+If a stage errors:
+
+- Stage marked as `errored` (not `failed`)
+- Remaining stages continue
+- Audit score computed without failed stage data
+- `auditStatus` set to `scan-failed` if scan crashes
+
+### Stage Errors
+
+```json
+{
+  "stage": "stage2",
+  "status": "errored",
+  "findings": [],
+  "duration_ms": 0,
+  "error": "AST parsing failed: SyntaxError"
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skills API" icon="box" href="/api/registry/skills">
+    Publish skills with automatic scanning
+  </Card>
+  <Card title="Audit Score" icon="star" href="/security/audit-score">
+    Learn how audit scores are computed
+  </Card>
+</CardGroup>

@@ -1,0 +1,677 @@
+---
+title: Security Pipeline
+description: Deep dive into Tank's 6-stage security scanning pipeline
+icon: filter
+---
+
+## Pipeline Overview
+
+Every skill published to Tank passes through a **6-stage security pipeline**. Stages run sequentially, with each stage building on the output of the previous one.
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Stage 0   │───▶│   Stage 1   │───▶│   Stage 2   │
+│   INGEST    │    │  STRUCTURE  │    │   STATIC    │
+└─────────────┘    └─────────────┘    └─────────────┘
+                                              │
+                                              ▼
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   Stage 5   │◀───│   Stage 4   │◀───│   Stage 3   │
+│   SUPPLY    │    │   SECRETS   │    │  INJECTION  │
+└─────────────┘    └─────────────┘    └─────────────┘
+```
+
+**Total Duration**: ~3-8 seconds for typical skill (50 files, 5 dependencies)
+
+## Stage 0: Ingest & Quarantine
+
+**Purpose**: Download tarball, safely extract to temp directory, validate archive structure
+
+**Source**: `python-api/lib/scan/stage0_ingest.py` (398 lines)
+
+### Checks Performed
+
+<AccordionGroup>
+  <Accordion title="URL Validation" icon="link">
+    **What**: Validates tarball download URL origin
+    
+    **Why**: Prevents SSRF attacks where malicious URLs could access internal services
+    
+    **How**: Whitelist of allowed domains (Supabase storage + localhost for dev)
+    
+    ```python
+    ALLOWED_DOWNLOAD_DOMAINS = [
+        "supabase.co",
+        "supabase.com",
+        "supabase.in",
+        "localhost",
+        "127.0.0.1",
+    ]
+    ```
+    
+    **Severity**: Critical (blocks download if domain not whitelisted)
+  </Accordion>
+
+  <Accordion title="Tarball Size Limit" icon="database">
+    **What**: Enforces 50MB maximum tarball size
+    
+    **Why**: Prevents resource exhaustion, DoS attacks
+    
+    **How**: Checks `Content-Length` header before streaming download
+    
+    ```python
+    MAX_TARBALL_SIZE = 50 * 1024 * 1024  # 50MB
+    ```
+    
+    **Severity**: Critical (rejects download if exceeded)
+  </Accordion>
+
+  <Accordion title="Zip Bomb Detection" icon="bomb">
+    **What**: Detects excessive compression ratios
+    
+    **Why**: Prevents zip bomb attacks (small compressed file that expands to gigabytes)
+    
+    **How**: Compares compressed vs uncompressed size
+    
+    ```python
+    MAX_COMPRESSION_RATIO = 100  # decompressed/compressed
+    if total_uncompressed / compressed_size > 100:
+        # Flag as critical
+    ```
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="Symlink & Hardlink Rejection" icon="link-slash">
+    **What**: Rejects archives containing symbolic or hard links
+    
+    **Why**: Prevents path traversal attacks via symlinks pointing outside skill directory
+    
+    **How**: Inspects `TarInfo.issym()` and `TarInfo.islnk()` for every member
+    
+    ```python
+    if member.issym() or member.islnk():
+        findings.append(Finding(
+            severity="high",
+            type="archive_link",
+            description=f"Archive contains {'symlink' if member.issym() else 'hardlink'}"
+        ))
+    ```
+    
+    **Severity**: High
+  </Accordion>
+
+  <Accordion title="Path Traversal Prevention" icon="folder-tree">
+    **What**: Rejects files with `..` in path or absolute paths
+    
+    **Why**: Prevents extraction to arbitrary filesystem locations
+    
+    **Examples**:
+    - `../../etc/passwd` → BLOCKED
+    - `/tmp/malicious.sh` → BLOCKED
+    - `src/utils.py` → ALLOWED
+    
+    ```python
+    if ".." in member.name or member.name.startswith("/"):
+        findings.append(Finding(
+            severity="critical",
+            type="path_traversal",
+        ))
+    ```
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="Blocked File Types" icon="file-circle-xmark">
+    **What**: Rejects binary executables and compiled code
+    
+    **Blocked Extensions**:
+    - Executables: `.exe`, `.dll`, `.so`, `.dylib`, `.wasm`
+    - Compiled: `.class`, `.pyc`, `.pyo`, `.jar`, `.war`
+    - Binary: `.bin`, `.dat`
+    
+    **Why**: Skills should be source code only, not compiled binaries
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="File Hash Computation" icon="hashtag">
+    **What**: Computes SHA-256 hash for every extracted file
+    
+    **Why**: Enables future integrity verification and change tracking
+    
+    **Output**: `{"src/main.py": "a3b2c1...", "README.md": "d4e5f6..."}` included in scan response
+  </Accordion>
+</AccordionGroup>
+
+### Output
+
+- **temp_dir**: Path to extracted skill files (cleaned up after pipeline)
+- **file_hashes**: Dict of filename → SHA-256 hash
+- **file_list**: Array of extracted file paths
+- **total_size**: Total bytes extracted
+
+---
+
+## Stage 1: File & Structure Validation
+
+**Purpose**: Validate skill structure, detect Unicode tricks, encoding issues
+
+**Source**: `python-api/lib/scan/stage1_structure.py` (323 lines)
+
+### Checks Performed
+
+<AccordionGroup>
+  <Accordion title="SKILL.md Presence" icon="file-lines">
+    **What**: Verifies `SKILL.md` exists in skill root
+    
+    **Why**: SKILL.md is the manifest file required for all skills
+    
+    **Severity**: High if missing
+  </Accordion>
+
+  <Accordion title="Bidirectional Override Detection" icon="text-slash">
+    **What**: Detects Unicode bidirectional override characters
+    
+    **Why**: Prevents "Trojan Source" attacks where code display order is reversed
+    
+    **Example**:
+    ```python
+    # This looks like: access_level = "user"
+    # But actually is:  access_level = "admin"
+    access_level = "\u202eadmin\u202d"  # ← bidirectional override
+    ```
+    
+    **Detected Characters**:
+    - `U+202A` - LEFT-TO-RIGHT EMBEDDING
+    - `U+202B` - RIGHT-TO-LEFT EMBEDDING
+    - `U+202E` - RIGHT-TO-LEFT OVERRIDE (most dangerous)
+    - `U+2066` through `U+2069` - Isolates
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="Zero-Width Character Detection" icon="eye-slash">
+    **What**: Detects invisible Unicode characters
+    
+    **Why**: Can hide malicious code or create identifier collisions
+    
+    **Detected Characters**:
+    - `U+200B` - ZERO WIDTH SPACE
+    - `U+200C` - ZERO WIDTH NON-JOINER
+    - `U+200D` - ZERO WIDTH JOINER
+    - `U+FEFF` - ZERO WIDTH NO-BREAK SPACE (BOM)
+    
+    **Severity**: Medium
+  </Accordion>
+
+  <Accordion title="Cyrillic Homoglyph Detection" icon="language">
+    **What**: Detects Cyrillic characters that look like Latin (e.g., Cyrillic 'а' vs Latin 'a')
+    
+    **Why**: Prevents homoglyph attacks (`import requеsts` where 'е' is Cyrillic)
+    
+    **Examples**:
+    - Cyrillic `а` (U+0430) looks like Latin `a` (U+0061)
+    - Cyrillic `е` (U+0435) looks like Latin `e` (U+0065)
+    - Cyrillic `о` (U+043E) looks like Latin `o` (U+006F)
+    
+    **Detection Logic**: Only flags if Cyrillic char is surrounded by ASCII letters
+    
+    **Severity**: High
+  </Accordion>
+
+  <Accordion title="NFKC Normalization Check" icon="arrows-rotate">
+    **What**: Detects content that changes under Unicode NFKC normalization
+    
+    **Why**: Some Unicode characters normalize to different characters, enabling tricks
+    
+    **Example**: `ﬁ` (U+FB01 ligature) normalizes to `fi` (two separate chars)
+    
+    **Severity**: Medium
+  </Accordion>
+
+  <Accordion title="Non-UTF-8 Encoding Detection" icon="globe">
+    **What**: Flags files not encoded as UTF-8
+    
+    **Why**: All source files should be UTF-8; other encodings are suspicious
+    
+    **Uses**: `charset-normalizer` library for detection
+    
+    **Severity**: Medium
+  </Accordion>
+
+  <Accordion title="Hidden File Detection" icon="file-slash">
+    **What**: Flags dotfiles not in the allowed list
+    
+    **Allowed**:
+    - `.gitignore`
+    - `.editorconfig`
+    - `.prettierrc`, `.eslintrc`, etc.
+    
+    **Flagged**:
+    - `.env` (should be `.env.example`)
+    - `.git/` directories
+    - Arbitrary dotfiles
+    
+    **Severity**: Low (informational)
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Stage 2: Static Code Analysis
+
+**Purpose**: AST analysis and pattern matching to detect dangerous code
+
+**Source**: `python-api/lib/scan/stage2_static.py` (551 lines — largest stage)
+
+### Checks Performed
+
+<AccordionGroup>
+  <Accordion title="Python AST Analysis" icon="python">
+    **What**: Parses Python files into Abstract Syntax Trees, walks nodes to find dangerous patterns
+    
+    **Tools**: Custom `PythonASTAnalyzer` + Bandit security linter
+    
+    **Detected Patterns**:
+    
+    **Shell Injection** (Critical):
+    - `os.system()`
+    - `os.popen()`
+    - `subprocess.call()`, `.run()`, `.Popen()`
+    
+    **Code Execution** (Critical):
+    - `eval()`
+    - `exec()`
+    - `compile()`
+    
+    **Insecure Deserialization** (Critical):
+    - `pickle.loads()`, `pickle.load()`
+    - `marshal.loads()`
+    - `shelve.open()`
+    
+    **Network Access** (High):
+    - `requests.get()`, `.post()`, etc.
+    - `httpx` calls
+    - `urllib.request.urlopen()`
+    - `socket.connect()`
+    
+    **Environment Access** (Medium):
+    - `os.environ`
+    - `os.getenv()`
+  </Accordion>
+
+  <Accordion title="Bandit Integration" icon="shield">
+    **What**: Runs Bandit security linter on all Python files
+    
+    **Coverage**: 100+ security checks including:
+    - B102 (exec usage)
+    - B307 (eval usage)
+    - Hardcoded passwords
+    - SQL injection
+    - Assert usage
+    
+    **Severity Mapping**:
+    - Bandit HIGH → critical (for exec/eval)
+    - Bandit MEDIUM → high
+    - Bandit LOW → medium
+  </Accordion>
+
+  <Accordion title="JavaScript/TypeScript Pattern Matching" icon="js">
+    **What**: Regex-based detection of dangerous JS/TS patterns
+    
+    **Detected** (Critical):
+    - `eval()` usage
+    - `Function()` constructor
+    - `new Function()`
+    - `child_process.exec()`
+    - `spawn()` with `shell: true`
+    
+    **Detected** (High):
+    - `fetch()` calls
+    - `XMLHttpRequest`
+    - `require('http')` or `require('https')`
+    - Sensitive file reads (`.ssh`, `.aws`, `.env`, `.config`)
+    
+    **Detected** (Medium):
+    - `process.env` access
+    - `require('dotenv')`
+  </Accordion>
+
+  <Accordion title="Shell Script Pattern Matching" icon="terminal">
+    **What**: Regex-based detection of dangerous shell patterns
+    
+    **Detected** (Critical):
+    - `curl <url> | bash`
+    - `wget <url> | bash`
+    - `eval` usage in shell
+    
+    **Detected** (High):
+    - `chmod 777`
+    
+    **Detected** (Medium):
+    - `chmod +x` (making files executable)
+    - `export` with variable substitution
+  </Accordion>
+
+  <Accordion title="Obfuscation Detection" icon="eye-slash">
+    **What**: Detects code obfuscation patterns
+    
+    **Patterns**:
+    - `base64.b64decode() + exec()` (Critical)
+    - `codecs.decode(..., 'rot13')` (High)
+    
+    **Why**: Obfuscated code is suspicious — legitimate skills have no reason to hide logic
+  </Accordion>
+
+  <Accordion title="Permission Cross-Check" icon="check-double">
+    **What**: Compares detected capabilities vs declared permissions
+    
+    **Example**:
+    - Stage 2 finds `requests.get("https://api.example.com")`
+    - Checks if `permissions.network.outbound` includes `*.example.com` or `*`
+    - If NOT declared → High severity finding
+    
+    **Also Checks**:
+    - Subprocess usage vs `permissions.subprocess`
+    - Filesystem access vs `permissions.filesystem.read/write`
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Stage 3: Prompt Injection Detection
+
+**Purpose**: Detect malicious instructions embedded in markdown files
+
+**Source**: `python-api/lib/scan/stage3_injection.py` (401 lines)
+
+### Checks Performed
+
+<AccordionGroup>
+  <Accordion title="Direct Override Patterns" icon="ban">
+    **What**: Detects attempts to override system instructions
+    
+    **Examples**:
+    - "ignore all previous instructions"
+    - "disregard above rules"
+    - "forget everything you were told"
+    - "your new role is..."
+    - "this is the real system prompt"
+    
+    **Regex Count**: 6 patterns with confidence 0.95-1.0
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="Role Hijacking Patterns" icon="user-secret">
+    **What**: Detects attempts to redefine the AI's role
+    
+    **Examples**:
+    - "you are now a..."
+    - "act as if you are..."
+    - "pretend to be..."
+    - "switch to developer mode"
+    - "from now on, you are..."
+    
+    **Regex Count**: 8 patterns
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="Context Manipulation" icon="puzzle-piece">
+    **What**: Attempts to confuse context or insert fake instructions
+    
+    **Examples**:
+    - "the above was just a test"
+    - "never mind what I said"
+    - "new instructions:"
+    - "updated instructions:"
+    
+    **Severity**: High
+  </Accordion>
+
+  <Accordion title="Exfiltration Directives" icon="share-from-square">
+    **What**: Instructions to send data to attacker
+    
+    **Examples**:
+    - "send to [URL]"
+    - "post this to..."
+    - "include in your response the contents of..."
+    - "output the system prompt"
+    - "reveal your instructions"
+    
+    **Severity**: Critical to High
+  </Accordion>
+
+  <Accordion title="Privilege Escalation Keywords" icon="arrow-up">
+    **What**: Attempts to gain elevated privileges
+    
+    **Examples**:
+    - "run as root"
+    - "sudo"
+    - "disable safety checks"
+    - "bypass security filters"
+    - "enable admin mode"
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="Claude-Specific Format Injection" icon="tags">
+    **What**: Detects Claude API format tags in skill documentation
+    
+    **Examples**:
+    - `<tool_use>`
+    - `<function_calls>`
+    - `<system>`, `<human>`, `<assistant>`
+    - `<invoke>`
+    - `[SYSTEM]`, `[HUMAN]`, `[ASSISTANT]`
+    
+    **Why**: Skills should not contain agent API syntax
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="Hidden Content Detection" icon="comment-slash">
+    **What**: Scans HTML/markdown comments for hidden instructions
+    
+    **Patterns**:
+    - `<!-- hidden instruction -->`
+    - `[//]: # (comment)`
+    - `[comment]: # (text)`
+    - Base64 in comments
+    
+    **Severity**: High
+  </Accordion>
+
+  <Accordion title="Suspicion Score Heuristic" icon="chart-line">
+    **What**: Computes overall suspicion score based on pattern density
+    
+    **Formula**:
+    ```python
+    pattern_score = sum(weight for matched patterns) / count
+    density_score = imperative_keywords / total_words * 50
+    total_score = (pattern_score * 0.7) + (density_score * 0.3)
+    ```
+    
+    **Threshold**: Score > 0.7 → flagged
+    
+    **Severity**: Medium (0.7-0.9) or High (0.9+)
+  </Accordion>
+
+  <Accordion title="Cisco Skill-Scanner Integration" icon="network-wired">
+    **What**: Runs Cisco's skill-scanner for behavioral analysis
+    
+    **Purpose**: Cross-file dataflow analysis (e.g., read creds in file A, send via network in file B)
+    
+    **Status**: Non-blocking (continues if fails)
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Stage 4: Secrets & Credential Scanning
+
+**Purpose**: Detect hardcoded API keys, credentials, private keys
+
+**Source**: `python-api/lib/scan/stage4_secrets.py` (305 lines)
+
+### Checks Performed
+
+<AccordionGroup>
+  <Accordion title="detect-secrets Integration" icon="key">
+    **What**: Runs Yelp's `detect-secrets` library with 12 plugins
+    
+    **Plugins**:
+    1. AWSKeyDetector
+    2. AzureStorageKeyDetector
+    3. BasicAuthDetector
+    4. GitHubTokenDetector
+    5. Base64HighEntropyString (limit 4.5)
+    6. HexHighEntropyString (limit 3.0)
+    7. PrivateKeyDetector
+    8. SlackDetector
+    9. StripeDetector
+    10. TwilioKeyDetector
+    11. KeywordDetector
+    12. JwtTokenDetector
+    
+    **Severity**: Critical for all findings
+  </Accordion>
+
+  <Accordion title="Custom Regex Patterns" icon="wand-magic-sparkles">
+    **What**: Additional patterns not covered by detect-secrets
+    
+    **Patterns**:
+    - Google Cloud API keys: `AIza[0-9A-Za-z_-]{35}`
+    - Generic API keys: `api_key = "[a-zA-Z0-9]{16,}"`
+    - Database URLs: `postgres://user:pass@host`
+    - SSH private keys: `-----BEGIN RSA PRIVATE KEY-----`
+    - JWT tokens: `eyJ...`
+    - Slack webhooks: `https://hooks.slack.com/services/...`
+    - Discord webhooks: `https://discord.com/api/webhooks/...`
+    - High-entropy strings (40+ chars)
+    
+    **Severity**: Critical to Medium
+  </Accordion>
+
+  <Accordion title=".env File Detection" icon="file">
+    **What**: Flags `.env` files with actual values (not `.env.example`)
+    
+    **Logic**:
+    - Allow `.env.example`, `.env.template`, etc.
+    - Flag `.env`, `.env.local`, `.env.production` if they contain `KEY=value` pairs
+    
+    **Severity**: High
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Stage 5: Supply Chain Audit
+
+**Purpose**: Check dependencies for vulnerabilities and typosquatting
+
+**Source**: `python-api/lib/scan/stage5_supply.py` (545 lines)
+
+### Checks Performed
+
+<AccordionGroup>
+  <Accordion title="OSV Vulnerability Scanning" icon="bug">
+    **What**: Queries OSV.dev API for known vulnerabilities in dependencies
+    
+    **API**: `https://api.osv.dev/v1/querybatch` (free, no auth, no rate limits)
+    
+    **Ecosystems**: PyPI (Python), npm (JavaScript)
+    
+    **Batch Processing**: Up to 100 packages per request
+    
+    **Severity Mapping**:
+    - CVSS >= 9.0 → Critical
+    - CVSS >= 7.0 → High
+    - CVSS >= 4.0 → Medium
+    - CVSS < 4.0 → Low
+  </Accordion>
+
+  <Accordion title="Typosquatting Detection" icon="spell-check">
+    **What**: Detects package names similar to popular packages (Levenshtein distance)
+    
+    **Algorithm**:
+    - Compare against top 1000 popular PyPI/npm packages
+    - Flag if Levenshtein distance is 1-2
+    - Flag if single character differs at same position
+    
+    **Examples**:
+    - `reqeusts` vs `requests` (distance 1) → FLAGGED
+    - `numppy` vs `numpy` (distance 1) → FLAGGED
+    
+    **Severity**: High
+  </Accordion>
+
+  <Accordion title="Unpinned Dependency Detection" icon="thumbtack">
+    **What**: Flags dependencies without exact version pins
+    
+    **Flagged**:
+    - `requests` (no version)
+    - `requests>=2.0` (range)
+    - `requests==*` (wildcard)
+    
+    **Allowed**:
+    - `requests==2.28.0` (exact pin)
+    
+    **Severity**: Medium
+  </Accordion>
+
+  <Accordion title="Dynamic Installation Detection" icon="download">
+    **What**: Detects code that runs `pip install` or `npm install` at runtime
+    
+    **Patterns**:
+    - `subprocess.run(["pip", "install", ...])`
+    - `os.system("pip install ...")`
+    - `exec("npm install ...")`
+    
+    **Why**: Skills should declare dependencies, not install them dynamically
+    
+    **Severity**: Critical
+  </Accordion>
+
+  <Accordion title="Dependency Manifest Parsing" icon="file-code">
+    **What**: Parses dependency files to extract package list
+    
+    **Supported Formats**:
+    - `requirements.txt` (Python)
+    - `package.json` (npm)
+    - `pyproject.toml` (Python Poetry/PDM)
+    
+    **Extracts**: Package name, version specifier, section (dependencies vs devDependencies)
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Performance
+
+| Stage | Typical Duration | Max Duration (timeout) |
+|-------|------------------|------------------------|
+| Stage 0 | 500ms - 2s | 30s (download timeout) |
+| Stage 1 | 100ms - 500ms | N/A |
+| Stage 2 | 1s - 3s | N/A |
+| Stage 3 | 500ms - 2s | N/A |
+| Stage 4 | 500ms - 1s | N/A |
+| Stage 5 | 1s - 3s | 20s (OSV API timeout) |
+| **Total** | **3s - 8s** | **~50s** |
+
+<Warning>
+  **Stage failures do not block subsequent stages.** If Stage 2 errors, Stage 3-5 still run. Only critical findings in Stage 0 (e.g., zip bomb, path traversal) block the entire pipeline.
+</Warning>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Permissions" icon="lock" href="/security/permissions">
+    How permissions are declared and enforced
+  </Card>
+  <Card title="Audit Score" icon="star" href="/security/audit-score">
+    Understanding the 0-10 security score
+  </Card>
+</CardGroup>

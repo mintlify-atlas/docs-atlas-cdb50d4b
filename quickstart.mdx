@@ -1,80 +1,326 @@
 ---
 title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+description: "Install Tank, authenticate, and install your first skill in under 5 minutes"
 ---
 
-## Get started in three steps
+## Get started in four steps
 
-Get your documentation site running locally and make your first customization.
+This guide gets you from zero to a working Tank setup with your first skill installed.
 
-### Step 1: Set up your local environment
+<Steps>
+  <Step title="Install the Tank CLI">
+    Choose your package manager:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+    <CodeGroup>
+      ```bash npm
+      npm install -g @tankpkg/cli
+      ```
 
-### Step 2: Deploy your changes
+      ```bash pnpm
+      pnpm add -g @tankpkg/cli
+      ```
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+      ```bash yarn
+      yarn global add @tankpkg/cli
+      ```
+    </CodeGroup>
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+    Verify the installation:
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```bash
+    tank --version
+    ```
 
-### Step 3: Go live
+    <Tip>
+      For other installation methods (shell script, binary), see the [Installation Guide](/installation).
+    </Tip>
+  </Step>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+  <Step title="Authenticate with GitHub">
+    Tank uses GitHub OAuth for authentication. Run:
 
-## Next steps
+    ```bash
+    tank login
+    ```
 
-Now that you have your docs running, explore these key features:
+    **What happens:**
+    1. Opens your browser to GitHub OAuth
+    2. You authorize Tank
+    3. CLI polls for completion
+    4. API key stored in `~/.tank/config.json`
+
+    **Example output:**
+
+    ```
+    Starting login...
+    Opened browser for authentication.
+    Waiting for authorization...
+    ✓ Logged in as your-username
+    ```
+
+    Verify your session:
+
+    ```bash
+    tank whoami
+    ```
+
+    <Note>
+      Your API key (prefix `tank_`) is stored locally. Tank never stores your GitHub credentials.
+    </Note>
+  </Step>
+
+  <Step title="Create a skills.json manifest">
+    Navigate to your project directory and initialize:
+
+    ```bash
+    cd my-agent-project
+    tank init
+    ```
+
+    **Interactive prompts:**
+
+    ```
+    ? Skill name: my-agent-project
+    ? Version: 0.1.0
+    ? Description: My AI agent project
+    ? Make this skill private? No
+    ? Author: Your Name
+    ✓ Created skills.json
+    ```
+
+    **Generated `skills.json`:**
+
+    ```json skills.json
+    {
+      "name": "my-agent-project",
+      "version": "0.1.0",
+      "description": "My AI agent project",
+      "visibility": "public",
+      "skills": {},
+      "permissions": {
+        "network": { "outbound": [] },
+        "filesystem": { "read": [], "write": [] },
+        "subprocess": false
+      }
+    }
+    ```
+
+    <Tip>
+      The `permissions` block is your **security boundary**. Skills exceeding these permissions will fail to install.
+    </Tip>
+  </Step>
+
+  <Step title="Install your first skill">
+    Install a skill from the Tank registry:
+
+    ```bash
+    tank install @vercel/next-skill
+    ```
+
+    **What happens:**
+    1. Resolves latest version matching semver range
+    2. Fetches skill metadata and download URL
+    3. Downloads tarball to temp directory
+    4. **Verifies SHA-512 integrity hash**
+    5. Extracts with security filters (no symlinks, path traversal, etc.)
+    6. Writes to `~/.tank/skills/@vercel/next-skill@2.1.3/`
+    7. Updates `skills.json` and generates `skills.lock`
+
+    **Example output:**
+
+    ```
+    ✓ Resolved @vercel/next-skill@2.1.3
+    ✓ Downloading tarball...
+    ✓ Verified integrity (sha512)
+    ✓ Extracting skill...
+    ✓ Updated skills.json
+    ✓ Updated skills.lock
+    ✓ Installed @vercel/next-skill@2.1.3
+    ```
+
+    **Generated `skills.lock`:**
+
+    ```json skills.lock
+    {
+      "lockfileVersion": 1,
+      "skills": {
+        "@vercel/next-skill@2.1.3": {
+          "resolved": "https://registry.tankpkg.dev/@vercel/next-skill/2.1.3",
+          "integrity": "sha512-abc123...",
+          "auditScore": 9,
+          "permissions": {
+            "filesystem": { "read": ["./src/**"] },
+            "network": false,
+            "subprocess": false
+          }
+        }
+      }
+    }
+    ```
+
+    <Warning>
+      **Permission budget check:** If the skill's permissions exceed your `skills.json` budget, installation fails. Update your permissions first.
+    </Warning>
+  </Step>
+</Steps>
+
+## Next Steps
+
+Now that you have Tank working, explore these workflows:
 
 <CardGroup cols={2}>
+  <Card title="View Installed Skills" icon="list">
+    ```bash
+    tank permissions
+    ```
+    Shows resolved permissions for all installed skills.
+  </Card>
 
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
+  <Card title="Security Audit" icon="shield-check">
+    ```bash
+    tank audit
+    ```
+    Displays security analysis and audit scores for all skills.
+  </Card>
 
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
+  <Card title="Update Skills" icon="arrow-up">
+    ```bash
+    tank update @vercel/next-skill
+    ```
+    Updates within semver range from `skills.json`.
+  </Card>
 
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Search Registry" icon="magnifying-glass">
+    ```bash
+    tank search "nextjs"
+    ```
+    Full-text search across skill names and descriptions.
+  </Card>
 </CardGroup>
 
+## Common Workflows
+
+### Installing from lockfile (CI/CD)
+
+When your team clones the repo or in CI, install exact versions from lockfile:
+
+```bash
+tank install
+```
+
+This is like `npm ci` — installs exactly what's in `skills.lock`, no version resolution.
+
+### Updating all skills
+
+Update all skills within their semver ranges:
+
+```bash
+tank update
+```
+
+### Removing a skill
+
+Remove from lockfile and delete files:
+
+```bash
+tank remove @vercel/next-skill
+```
+
+### Verify lockfile integrity
+
+Check that installed skills match lockfile hashes:
+
+```bash
+tank verify
+```
+
+## Understanding Output
+
+### Audit Score
+
+Tank displays audit scores (0-10) during install:
+
+- **9-10**: Excellent — low risk
+- **7-8**: Good — minor issues
+- **5-6**: Needs review — moderate risk
+- **0-4**: High risk — review carefully
+
+You can set a minimum threshold in `skills.json`:
+
+```json
+{
+  "audit": {
+    "min_score": 7
+  }
+}
+```
+
+### Permission Budget Failures
+
+If a skill exceeds your permission budget:
+
+```
+✗ Permission budget exceeded for @org/skill:
+  Required: filesystem.write = ["./data/**"]
+  Allowed: filesystem.write = []
+  
+Update your skills.json permissions to allow this skill.
+```
+
+<Tip>
+  Review the skill's permissions with `tank info @org/skill` before expanding your budget.
+</Tip>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Command not found: tank" icon="terminal">
+    The CLI wasn't added to your PATH. Try:
+    - Restart your terminal
+    - Check install location: `npm list -g @tankpkg/cli`
+    - Use `npx @tankpkg/cli` instead
+  </Accordion>
+
+  <Accordion title="Login timeout" icon="clock">
+    GitHub OAuth took too long. Common fixes:
+    - Check your network connection
+    - Disable VPN temporarily
+    - Try again: `tank logout && tank login`
+  </Accordion>
+
+  <Accordion title="Integrity verification failed" icon="shield-xmark">
+    The downloaded tarball doesn't match the expected hash. This could indicate:
+    - Network corruption (retry)
+    - Registry issue (check status)
+    - **Supply chain attack** (report immediately)
+  </Accordion>
+
+  <Accordion title="Permission denied errors" icon="lock">
+    Check file permissions:
+    ```bash
+    ls -la ~/.tank/
+    ```
+    The CLI needs write access to `~/.tank/` for config and skills.
+  </Accordion>
+</AccordionGroup>
+
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  **Need more help?** Run `tank doctor` to diagnose configuration, authentication, and network issues.
 </Note>
+
+## What's Next?
+
+<CardGroup cols={2}>
+  <Card title="Installation Guide" icon="download" href="/installation">
+    Detailed installation for all platforms, package managers, and binary releases.
+  </Card>
+  <Card title="Core Concepts" icon="book" href="/concepts/skills">
+    Deep dive into skills, manifests, lockfiles, and permissions.
+  </Card>
+  <Card title="CLI Commands" icon="terminal" href="/cli/authentication">
+    Complete reference for all 16 Tank CLI commands.
+  </Card>
+  <Card title="Security Pipeline" icon="shield" href="/security/pipeline">
+    Learn how Tank's 6-stage security scanning works.
+  </Card>
+</CardGroup>

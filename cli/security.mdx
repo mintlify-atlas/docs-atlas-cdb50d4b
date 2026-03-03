@@ -1,0 +1,481 @@
+---
+title: Security Commands
+description: Verify integrity, check permissions, and audit skills
+---
+
+# Security Commands
+
+Security commands help you verify skill integrity, inspect permissions, and review security scan results.
+
+## tank verify
+
+Verify that installed skills match the lockfile.
+
+```bash
+tank verify
+```
+
+### Verification Flow
+
+1. Read `skills.lock` in current directory
+2. For each skill entry:
+   - Parse skill name from lock key
+   - Check that skill directory exists in `.tank/skills/`
+   - Verify directory is not empty
+3. Report any mismatches or missing files
+
+### Example Output
+
+**All verified:**
+
+```bash
+$ tank verify
+✓ All 3 skills verified
+```
+
+**Issues found:**
+
+```bash
+$ tank verify
+✗ @acme/analytics@1.2.0: directory missing at .tank/skills/@acme/analytics
+✗ @org/processor@2.0.0: directory exists but is empty
+✗ Verification failed: 2 issues found
+```
+
+### Use Cases
+
+- **Verify installation** - Ensure `tank install` completed successfully
+- **Detect tampering** - Check if skill files were modified or deleted
+- **CI/CD checks** - Verify lockfile matches installed state
+- **Troubleshooting** - Diagnose missing or corrupt skill files
+
+### When to Run
+
+```bash
+# After install
+tank install && tank verify
+
+# In CI/CD pipeline
+tank install
+tank verify
+tank permissions  # Check budget
+tank audit        # Check security scores
+```
+
+## tank permissions
+
+Display resolved permissions for all installed skills.
+
+```bash
+tank permissions
+```
+
+### Example Output
+
+```bash
+$ tank permissions
+
+Resolved permissions for this project:
+
+Network (outbound):
+  api.acme.com    ← @acme/analytics
+  *.example.com   ← @org/processor
+
+Filesystem (read):
+  ./data/**       ← @acme/analytics, @org/processor
+  ./config.json   ← @org/processor
+
+Filesystem (write):
+  ./output/**     ← @org/processor
+
+Subprocess:
+  allowed    ← @org/processor
+
+Budget status: ✓ PASS (all within budget)
+```
+
+### Budget Violations
+
+If permissions exceed the budget:
+
+```bash
+Budget status: ✗ FAIL
+  - network outbound: "api.acme.com" not in budget (requested by @acme/analytics)
+  - subprocess: "subprocess access" not in budget (requested by @org/processor)
+```
+
+### No Budget Defined
+
+If `skills.json` doesn't define a permission budget:
+
+```bash
+Budget status: ⚠ No budget defined
+```
+
+To define a budget, add to `skills.json`:
+
+```json
+{
+  "permissions": {
+    "network": {
+      "outbound": ["*.example.com", "api.acme.com"]
+    },
+    "filesystem": {
+      "read": ["./data/**", "./config.json"],
+      "write": ["./output/**"]
+    },
+    "subprocess": true
+  }
+}
+```
+
+## Permission Budget Rules
+
+### Network (Outbound)
+
+Define allowed domains with wildcard support:
+
+```json
+{
+  "network": {
+    "outbound": [
+      "api.example.com",      // Exact domain
+      "*.example.com",        // Wildcard (matches sub.example.com)
+      "example.com"           // Apex domain
+    ]
+  }
+}
+```
+
+**Wildcard matching:**
+
+- `*.example.com` matches `api.example.com`, `sub.example.com`
+- Does NOT match `example.com` (apex)
+- Does NOT match `malicious.com`
+
+### Filesystem (Read/Write)
+
+Define allowed paths with glob support:
+
+```json
+{
+  "filesystem": {
+    "read": [
+      "./data/input.json",   // Exact file
+      "./data/**",           // Recursive glob
+      "./config/*.json"      // Pattern glob
+    ],
+    "write": [
+      "./output/**",         // Recursive write
+      "./logs/*.log"         // Pattern write
+    ]
+  }
+}
+```
+
+**Path matching:**
+
+- `./data/**` matches `./data/file.txt`, `./data/sub/file.txt`
+- Exact paths must match exactly
+- Relative paths only (no absolute paths)
+
+### Subprocess
+
+Boolean flag for subprocess execution:
+
+```json
+{
+  "subprocess": true   // Allow subprocess execution
+}
+```
+
+```json
+{
+  "subprocess": false  // Deny subprocess execution (default)
+}
+```
+
+## tank audit
+
+Display security audit results for installed skills.
+
+```bash
+# Audit all skills
+tank audit
+
+# Audit specific skill
+tank audit @acme/analytics
+```
+
+### Audit All Skills
+
+```bash
+$ tank audit
+NAME                          VERSION     SCORE     STATUS
+@acme/analytics               1.2.0       8.5       pass
+@org/processor                2.0.0       6.2       pass
+@org/legacy-tool              1.0.0       3.1       issues
+
+3 skills audited. 2 pass, 1 has issues.
+```
+
+### Audit Single Skill
+
+```bash
+$ tank audit @acme/analytics
+
+@acme/analytics
+
+Version:      1.2.0
+Audit Score:  8.5
+Status:       completed
+
+Permissions:
+  Network:      api.acme.com
+  Filesystem:   ./data/** (read)
+  Subprocess:   no
+```
+
+### Audit Scores
+
+Scores range from 0-10:
+
+- **7.0-10.0** - Pass (green)
+- **4.0-6.9** - Pass with notes (yellow)
+- **0.0-3.9** - Issues found (red)
+
+### Audit Status
+
+- **completed** - Analysis finished, score available
+- **pending** - Queued for analysis
+- **error** - Analysis failed (contact support)
+
+### Pending Analysis
+
+Newly published skills may show pending status:
+
+```bash
+$ tank audit @acme/new-skill
+
+@acme/new-skill
+
+Version:      0.1.0
+Audit Score:  pending
+Status:       Analysis pending
+```
+
+Analysis typically completes within:
+- **Small skills (&lt;100 KB):** 1-2 minutes
+- **Medium skills (100KB-1MB):** 2-5 minutes
+- **Large skills (1MB-50MB):** 5-15 minutes
+
+## Security Scan Pipeline
+
+Tank uses a 6-stage security scanner:
+
+### Stage 0: Ingest
+
+- Compute file hashes
+- Detect file types
+- Extract metadata
+
+### Stage 1: Structure
+
+- Analyze directory structure
+- Check for suspicious patterns (node_modules, .git, etc.)
+- Validate skill.json schema
+
+### Stage 2: Static Analysis
+
+- Parse AST (abstract syntax tree)
+- Detect dangerous functions (eval, exec, spawn)
+- Check code complexity
+
+### Stage 3: Injection
+
+- Detect prompt injection attempts
+- Check for SQL injection patterns
+- Identify command injection risks
+
+### Stage 4: Secrets
+
+- Scan for hardcoded credentials
+- Detect API keys, tokens, passwords
+- Check for PII (personally identifiable information)
+
+### Stage 5: Supply Chain
+
+- Analyze dependencies
+- Check for known vulnerabilities
+- Verify package integrity
+
+### Verdict Rules
+
+```
+1+ critical findings → FAIL
+4+ high findings → FAIL
+1-3 high findings → FLAGGED
+Only medium/low → PASS_WITH_NOTES
+No findings → PASS
+```
+
+See source: `python-api/lib/scan/stage5_verdict.py`
+
+## Audit Score Calculation
+
+The audit score is computed from finding severity:
+
+```python
+base_score = 10.0
+base_score -= critical_count * 3.0
+base_score -= high_count * 1.0
+base_score -= medium_count * 0.3
+base_score -= low_count * 0.1
+final_score = max(0.0, min(10.0, base_score))
+```
+
+### Example
+
+- 0 critical, 2 high, 5 medium, 10 low
+- `10.0 - (2 * 1.0) - (5 * 0.3) - (10 * 0.1) = 10.0 - 2.0 - 1.5 - 1.0 = 5.5`
+
+## Setting Minimum Audit Score
+
+Prevent installation of low-scoring skills:
+
+```json
+{
+  "audit": {
+    "min_score": 7.0
+  }
+}
+```
+
+During `tank install`:
+
+```bash
+✗ Audit score 4.2 for @acme/risky-skill is below minimum threshold 7.0
+  defined in skills.json
+```
+
+## Viewing Detailed Findings
+
+To view detailed security findings, use the Tank web interface:
+
+```
+https://tank.dev/skills/@acme/analytics/security
+```
+
+The web UI shows:
+- All findings with severity and category
+- Source code snippets with line numbers
+- Remediation suggestions
+- SARIF export for IDE integration
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+name: Security Checks
+
+on: [push, pull_request]
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      
+      - name: Install Tank
+        run: npm install -g @tank/cli
+      
+      - name: Authenticate
+        run: |
+          mkdir -p ~/.tank
+          echo '{"registry":"https://tank.dev","token":"${{ secrets.TANK_TOKEN }}"}' > ~/.tank/config.json
+      
+      - name: Install skills
+        run: tank install
+      
+      - name: Verify integrity
+        run: tank verify
+      
+      - name: Check permissions
+        run: tank permissions
+      
+      - name: Audit security
+        run: tank audit
+```
+
+## Best Practices
+
+1. **Always verify after install**
+   ```bash
+   tank install && tank verify
+   ```
+
+2. **Define permission budget early**
+   - Add `permissions` to `skills.json` before installing skills
+   - Start strict, relax only when needed
+
+3. **Set minimum audit score**
+   ```json
+   {"audit": {"min_score": 7.0}}
+   ```
+
+4. **Review permissions regularly**
+   ```bash
+   tank permissions  # Check current state
+   ```
+
+5. **Audit before production**
+   ```bash
+   tank audit  # Review all skills before deploy
+   ```
+
+6. **Use lockfiles in version control**
+   - Commit `skills.lock` to git
+   - Ensures team uses same versions
+   - Enables integrity verification
+
+## Troubleshooting
+
+### Verify: No lockfile
+
+```bash
+✗ No skills.lock found in /path/to/project. Run: tank install
+```
+
+**Fix:** Run `tank install` to create lockfile.
+
+### Permissions: Budget violation
+
+```bash
+Budget status: ✗ FAIL
+  - network outbound: "api.example.com" not in budget
+```
+
+**Fix:** Add domain to `permissions.network.outbound` in `skills.json`:
+
+```json
+{
+  "permissions": {
+    "network": {
+      "outbound": ["api.example.com"]
+    }
+  }
+}
+```
+
+### Audit: Pending analysis
+
+```bash
+Audit Score:  pending
+Status:       Analysis pending
+```
+
+**Fix:** Wait 1-15 minutes for analysis to complete, then run `tank audit` again.

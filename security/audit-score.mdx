@@ -1,0 +1,482 @@
+---
+title: Audit Score
+description: Understanding Tank's 0-10 security scoring system
+icon: star
+---
+
+## Overview
+
+Every published skill receives an **Audit Score** from 0-10 based on 8 weighted checks. This score is displayed in the registry UI and CLI before installation to help users make informed decisions.
+
+**Source**: `apps/web/lib/audit-score.ts` (167 lines)
+
+```typescript
+export function computeAuditScore(input: AuditScoreInput): AuditScoreResult {
+  // Always returns score 0-10 and exactly 8 check results
+}
+```
+
+---
+
+## Scoring Rubric
+
+Total possible points: **10**
+
+| Check | Points | Description |
+|-------|--------|-------------|
+| 1. SKILL.md present | 1 | Manifest file exists |
+| 2. Description present | 1 | Non-empty description field |
+| 3. Permissions declared | 1 | Permissions object is non-empty |
+| 4. No security issues | 2 | No critical/high findings from scan |
+| 5. Permission extraction match | 2 | Code capabilities match declared perms |
+| 6. File count reasonable | 1 | Fewer than 100 files |
+| 7. README documentation | 1 | README field is non-empty |
+| 8. Package size reasonable | 1 | Tarball under 5 MB |
+
+---
+
+## Check Details
+
+### Check 1: SKILL.md Present (1 point)
+
+**What**: Verifies the skill has a valid manifest
+
+**Logic**:
+```typescript
+const skillMdPresent = 
+  typeof manifest.name === 'string' && manifest.name.length > 0;
+```
+
+**Why**: `SKILL.md` is required for all skills. If this fails, the skill wasn't properly packaged.
+
+**Passes**: `manifest.name` is a non-empty string
+
+**Fails**: `manifest.name` is empty or missing
+
+---
+
+### Check 2: Description Present (1 point)
+
+**What**: Checks for a description in the manifest
+
+**Logic**:
+```typescript
+const descriptionPresent =
+  typeof manifest.description === 'string' && 
+  manifest.description.length > 0;
+```
+
+**Why**: Skills without descriptions are low-quality or incomplete.
+
+**Passes**: `manifest.description` is a non-empty string
+
+**Fails**: Description is empty or missing
+
+---
+
+### Check 3: Permissions Declared (1 point)
+
+**What**: Checks if the skill declares any permissions
+
+**Logic**:
+```typescript
+const permissionsDeclared = Object.keys(permissions).length > 0;
+```
+
+**Why**: Skills with `permissions = {}` are suspicious — they either forgot to declare or are hiding capabilities.
+
+**Passes**: At least one permission category declared
+
+**Fails**: `permissions` is `{}` or `undefined`
+
+<Warning>
+  **This check is controversial.** Some skills legitimately need no permissions (e.g., pure documentation skills). However, Tank's security-first philosophy assumes most skills interact with the environment. Future versions may refine this check.
+</Warning>
+
+---
+
+### Check 4: No Security Issues (2 points)
+
+**What**: Checks if the security scan found any issues
+
+**Logic**:
+```typescript
+const noSecurityIssues =
+  analysisResults == null ||
+  analysisResults.securityIssues == null ||
+  analysisResults.securityIssues.length === 0;
+```
+
+**Why**: Security findings indicate potential vulnerabilities or malicious code.
+
+**Passes**:
+- No security scan ran yet (default pass for new skills)
+- Security scan found 0 issues
+
+**Fails**: 1+ security issues found (any severity)
+
+**Note**: This check does NOT distinguish between critical, high, medium, low. Even a single low-severity finding fails this check. This is intentional — the 2-point weight reflects importance.
+
+---
+
+### Check 5: Permission Extraction Match (2 points)
+
+**What**: Compares code-extracted permissions vs declared permissions
+
+**Logic**:
+```typescript
+let permissionMatch = true;
+if (analysisResults?.extractedPermissions != null) {
+  permissionMatch = extractedPermissionsMatch(
+    permissions,              // Declared in manifest
+    analysisResults.extractedPermissions  // Extracted from code
+  );
+}
+
+function extractedPermissionsMatch(
+  declared: Record<string, unknown>,
+  extracted: Record<string, unknown>
+): boolean {
+  // Check if extracted ⊆ declared (subset)
+  for (const key of Object.keys(extracted)) {
+    if (!(key in declared)) return false;
+    if (JSON.stringify(declared[key]) !== JSON.stringify(extracted[key])) {
+      return false;
+    }
+  }
+  return true;
+}
+```
+
+**Why**: Detects undeclared capabilities (e.g., code makes network requests but no `network` permission declared).
+
+**Passes**:
+- No permission extraction ran yet (default pass)
+- All extracted permissions exist in declared permissions
+- Extracted permissions are a subset of declared
+
+**Fails**: Code uses capabilities not in the manifest
+
+**Example**:
+
+**Declared**:
+```json
+{
+  "permissions": {
+    "filesystem": { "read": ["src/**"] }
+  }
+}
+```
+
+**Extracted** (from Stage 2 static analysis):
+```json
+{
+  "filesystem": { "read": ["src/**"] },
+  "network": { "outbound": ["api.evil.com"] }
+}
+```
+
+**Result**: FAIL (network permission extracted but not declared)
+
+---
+
+### Check 6: File Count Reasonable (1 point)
+
+**What**: Ensures the skill has fewer than 100 files
+
+**Logic**:
+```typescript
+const MAX_FILE_COUNT = 100;
+const fileCountOk = fileCount < MAX_FILE_COUNT;
+```
+
+**Why**: Skills with 100+ files are either:
+1. Overly complex (code smell)
+2. Accidentally including `node_modules/` or other large directories
+3. Potential zip bomb attempts
+
+**Passes**: `fileCount < 100`
+
+**Fails**: `fileCount >= 100`
+
+**Note**: This limit may be increased based on community feedback.
+
+---
+
+### Check 7: README Documentation (1 point)
+
+**What**: Checks if the skill has a README
+
+**Logic**:
+```typescript
+const readmePresent =
+  typeof readme === 'string' && readme.trim().length > 0;
+```
+
+**Why**: Skills without documentation are low-quality or incomplete.
+
+**Passes**: `README.md` exists and is non-empty
+
+**Fails**: No README or empty README
+
+---
+
+### Check 8: Package Size Reasonable (1 point)
+
+**What**: Ensures tarball is under 5 MB
+
+**Logic**:
+```typescript
+const MAX_TARBALL_SIZE = 5_242_880; // 5 MB
+const sizeOk = tarballSize < MAX_TARBALL_SIZE;
+```
+
+**Why**: Large packages are suspicious (possible data exfiltration, vendored binaries, or bloated dependencies).
+
+**Passes**: `tarballSize < 5 MB`
+
+**Fails**: `tarballSize >= 5 MB`
+
+**Note**: The global limit is 50 MB (enforced by Stage 0), but the audit score uses a stricter 5 MB threshold for quality.
+
+---
+
+## Score Interpretation
+
+| Score | Meaning | CLI Display | Install Behavior |
+|-------|---------|-------------|------------------|
+| 10/10 | Perfect | 🟢 Excellent | No warnings |
+| 8-9 | Great | 🟢 Great | No warnings |
+| 6-7 | Good | 🟡 Good | Warnings shown |
+| 4-5 | Fair | 🟠 Fair | Confirmation required |
+| 0-3 | Poor | 🔴 Poor | Strong warning + confirmation |
+
+**CLI Example** (score 8/10):
+```bash
+$ tank install my-skill
+
+📦 my-skill@1.0.0
+🟢 Security Score: 8/10
+
+✓ SKILL.md present
+✓ Description present
+✓ Permissions declared
+✗ No security issues (2 medium findings)
+✓ Permission extraction match
+✓ File count reasonable
+✓ README documentation
+✓ Package size reasonable
+
+Install? (y/N)
+```
+
+**Registry UI Example**:
+
+```
+┌─────────────────────────────────────┐
+│ my-skill v1.0.0                     │
+├─────────────────────────────────────┤
+│ Security Score: 8/10  🟢            │
+│                                     │
+│ ✓ SKILL.md present         1/1 pt  │
+│ ✓ Description              1/1 pt  │
+│ ✓ Permissions declared     1/1 pt  │
+│ ✗ No security issues       0/2 pts │
+│ ✓ Permission match         2/2 pts │
+│ ✓ File count OK            1/1 pt  │
+│ ✓ README present           1/1 pt  │
+│ ✓ Package size OK          1/1 pt  │
+└─────────────────────────────────────┘
+```
+
+---
+
+## API Response Format
+
+From `AuditScoreResult` interface:
+
+```typescript
+export interface AuditScoreResult {
+  score: number;           // 0-10
+  details: ScoreDetail[];  // Exactly 8 entries
+}
+
+export interface ScoreDetail {
+  check: string;        // Human-readable name
+  passed: boolean;      // Did this check pass?
+  points: number;       // Points awarded (0 if failed)
+  maxPoints: number;    // Maximum possible points
+}
+```
+
+**Example JSON**:
+```json
+{
+  "score": 8,
+  "details": [
+    {
+      "check": "SKILL.md present",
+      "passed": true,
+      "points": 1,
+      "maxPoints": 1
+    },
+    {
+      "check": "Description present",
+      "passed": true,
+      "points": 1,
+      "maxPoints": 1
+    },
+    {
+      "check": "Permissions declared",
+      "passed": true,
+      "points": 1,
+      "maxPoints": 1
+    },
+    {
+      "check": "No security issues",
+      "passed": false,
+      "points": 0,
+      "maxPoints": 2
+    },
+    {
+      "check": "Permission extraction match",
+      "passed": true,
+      "points": 2,
+      "maxPoints": 2
+    },
+    {
+      "check": "File count reasonable",
+      "passed": true,
+      "points": 1,
+      "maxPoints": 1
+    },
+    {
+      "check": "README documentation",
+      "passed": true,
+      "points": 1,
+      "maxPoints": 1
+    },
+    {
+      "check": "Package size reasonable",
+      "passed": true,
+      "points": 1,
+      "maxPoints": 1
+    }
+  ]
+}
+```
+
+---
+
+## Default Pass Behavior
+
+Checks 4 and 5 have **default pass** logic:
+
+**Why?** Skills are scored immediately after publish, but the security scanner runs asynchronously (can take 5-10 seconds). Rather than showing "Score: N/A" or delaying publish, Tank:
+
+1. Assigns initial score with checks 4 & 5 = PASS (default)
+2. Re-scores after security scan completes
+3. Updates the registry UI
+
+From the code:
+```typescript
+// 4. No security issues (+2, default pass if no analysis ran)
+const noSecurityIssues =
+  analysisResults == null ||  // ← default pass
+  analysisResults.securityIssues == null ||
+  analysisResults.securityIssues.length === 0;
+
+// 5. Permission extraction match (+2, default pass if no analysis)
+let permissionMatch = true;  // ← default pass
+if (
+  analysisResults != null &&
+  analysisResults.extractedPermissions != null
+) {
+  permissionMatch = extractedPermissionsMatch(...);
+}
+```
+
+**Timeline**:
+```
+t=0s:   Skill published → Initial score 10/10 (checks 4 & 5 pass by default)
+t=5s:   Security scan completes → Score updated to 8/10 (check 4 failed)
+t=5s:   UI refreshes to show new score
+```
+
+---
+
+## Score vs Verdict
+
+**Audit Score** and **Scan Verdict** are different:
+
+| Metric | Purpose | Values | Who Sees |
+|--------|---------|--------|----------|
+| **Audit Score** | Quality + security signal | 0-10 | Users (install time) |
+| **Scan Verdict** | Publish gate | PASS, PASS_WITH_NOTES, FLAGGED, FAIL | Registry admins |
+
+**Example**:
+- Skill has 2 medium findings
+- **Verdict**: PASS_WITH_NOTES (allowed to publish)
+- **Audit Score**: 8/10 (check 4 fails, loses 2 points)
+
+**Another Example**:
+- Skill has 1 critical finding
+- **Verdict**: FAIL (cannot publish)
+- **Audit Score**: N/A (skill rejected before scoring)
+
+---
+
+## Improving Your Score
+
+If your skill scores below 8/10, here's how to fix each check:
+
+| Check | How to Fix |
+|-------|------------|
+| SKILL.md present | Ensure `name` field is non-empty in `SKILL.md` frontmatter |
+| Description present | Add `description` field to manifest |
+| Permissions declared | Add `permissions` object with required capabilities |
+| No security issues | Fix or suppress findings (see [Best Practices](/security/best-practices)) |
+| Permission extraction match | Ensure declared permissions match code usage |
+| File count reasonable | Remove unnecessary files, add to `.tankignore` |
+| README documentation | Add a `README.md` with usage instructions |
+| Package size reasonable | Reduce tarball size (exclude assets, use `.tankignore`) |
+
+---
+
+## False Negative Risks
+
+**Can a malicious skill get 10/10?**
+
+Yes, if the attacker:
+1. Includes valid SKILL.md and README
+2. Declares permissions honestly
+3. Obfuscates malicious code to evade Stage 2-5 scanners
+4. Keeps package under 5 MB and 100 files
+
+**Mitigation**:
+- Audit score is ONE signal, not the only signal
+- Users should also review:
+  - Skill author reputation
+  - Download count
+  - Community reviews
+  - Source code (if browsing registry)
+- Tank's 6-stage scanner catches most obfuscation (see [Pipeline](/security/pipeline))
+
+**Future Improvements**:
+- Author reputation score
+- Community upvotes/downvotes
+- Verified author badges
+- AI-powered code review (GPT-4 analysis of semantics)
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Security Pipeline" icon="filter" href="/security/pipeline">
+    How the 6-stage scanner produces findings
+  </Card>
+  <Card title="Best Practices" icon="book" href="/security/best-practices">
+    Tips for achieving 10/10 score
+  </Card>
+</CardGroup>

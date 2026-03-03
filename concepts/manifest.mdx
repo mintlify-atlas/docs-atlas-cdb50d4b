@@ -1,0 +1,291 @@
+---
+title: Manifest (skills.json)
+description: Skills.json format, semver ranges, dependencies, and schema validation
+---
+
+# Manifest (skills.json)
+
+Every skill package requires a `skills.json` manifest file. This file declares metadata, dependencies, permissions, and other critical information about your skill.
+
+## Schema
+
+The manifest is validated using Zod. Here's the complete schema from `packages/shared/src/schemas/skills-json.ts`:
+
+```typescript
+import { z } from 'zod';
+import { permissionsSchema } from './permissions.js';
+
+const NAME_PATTERN = /^@[a-z0-9-]+\/[a-z0-9][a-z0-9-]*$/;
+const SEMVER_PATTERN = /^\d+\.\d+\.\d+(-[a-zA-Z0-9.-]+)?(\+[a-zA-Z0-9.-]+)?$/;
+
+export const skillsJsonSchema = z.object({
+  name: z.string()
+    .min(1, 'Name must not be empty')
+    .max(214, 'Name must be 214 characters or fewer')
+    .regex(NAME_PATTERN, 'Name must be scoped (@org/name), lowercase alphanumeric and hyphens'),
+  version: z.string()
+    .regex(SEMVER_PATTERN, 'Version must be valid semver'),
+  description: z.string()
+    .max(500, 'Description must be 500 characters or fewer')
+    .optional(),
+  skills: z.record(z.string(), z.string()).optional(),
+  permissions: permissionsSchema.optional(),
+  repository: z.string().url('Repository must be a valid URL').optional(),
+  visibility: z.enum(['public', 'private']).optional(),
+  audit: z.object({
+    min_score: z.number().min(0).max(10),
+  }).strict().optional(),
+}).strict();
+
+export type SkillsJson = z.infer<typeof skillsJsonSchema>;
+```
+
+## Required Fields
+
+### name
+
+**Type**: `string`
+
+**Pattern**: `@org/skill-name`
+
+**Rules**:
+- Must be scoped (start with `@org/`)
+- Lowercase alphanumeric characters and hyphens only
+- 1-214 characters
+- Unique across the registry
+
+**Example**:
+```json
+{
+  "name": "@tank/google-sheets"
+}
+```
+
+### version
+
+**Type**: `string`
+
+**Format**: Semantic Versioning (semver)
+
+**Rules**:
+- Must match pattern: `MAJOR.MINOR.PATCH[-prerelease][+build]`
+- Examples: `1.0.0`, `2.1.3-beta.1`, `1.0.0+20231201`
+
+**Example**:
+```json
+{
+  "version": "1.2.3"
+}
+```
+
+<Note>
+  Tank enforces strict semver. Use `tank version` commands to bump versions correctly:
+  - `tank version patch` — Bug fixes (1.0.0 → 1.0.1)
+  - `tank version minor` — New features (1.0.0 → 1.1.0)
+  - `tank version major` — Breaking changes (1.0.0 → 2.0.0)
+</Note>
+
+## Optional Fields
+
+### description
+
+**Type**: `string` (optional)
+
+**Max length**: 500 characters
+
+A brief description of what the skill does. This appears in search results and on the registry website.
+
+**Example**:
+```json
+{
+  "description": "Read, write, format, and analyze Google Sheets data through the Sheets API"
+}
+```
+
+### skills (dependencies)
+
+**Type**: `Record<string, string>` (optional)
+
+Dependencies on other skills, with semver range specifiers.
+
+**Supported range formats**:
+- **Exact**: `1.2.3`
+- **Caret** (compatible): `^1.2.3` — allows `>=1.2.3 <2.0.0`
+- **Tilde** (patch): `~1.2.3` — allows `>=1.2.3 <1.3.0`
+- **Range**: `>=1.0.0 <2.0.0`
+
+**Example**:
+```json
+{
+  "skills": {
+    "@tank/google-auth": "^2.0.0",
+    "@tank/spreadsheet-utils": "~1.5.0",
+    "@acme/data-validator": "1.0.0"
+  }
+}
+```
+
+<Warning>
+  Circular dependencies are not allowed. Tank will detect and reject packages with circular dependency graphs during `tank install`.
+</Warning>
+
+### permissions
+
+**Type**: `Permissions` (optional)
+
+Declares what system resources the skill needs access to. See [Permissions](/concepts/permissions) for detailed documentation.
+
+**Example**:
+```json
+{
+  "permissions": {
+    "network": {
+      "outbound": ["*.googleapis.com", "accounts.google.com"]
+    },
+    "filesystem": {
+      "read": ["./**"],
+      "write": ["./output/**"]
+    },
+    "subprocess": false
+  }
+}
+```
+
+### repository
+
+**Type**: `string` (URL, optional)
+
+Link to the skill's source code repository (GitHub, GitLab, etc.).
+
+**Example**:
+```json
+{
+  "repository": "https://github.com/tankpkg/google-sheets"
+}
+```
+
+### visibility
+
+**Type**: `"public" | "private"` (optional, defaults to `"public"`)
+
+Controls who can discover and install the skill:
+- `public` — Anyone can search, view, and install
+- `private` — Only organization members can access
+
+**Example**:
+```json
+{
+  "visibility": "private"
+}
+```
+
+### audit
+
+**Type**: `object` (optional)
+
+Configures minimum security audit score requirements.
+
+**Fields**:
+- `min_score` — Minimum audit score (0-10) required for this skill's dependencies
+
+**Example**:
+```json
+{
+  "audit": {
+    "min_score": 7.0
+  }
+}
+```
+
+<Note>
+  Audit scores are computed from the 6-stage security scan. A score below your `min_score` will cause `tank install` to fail for that dependency.
+</Note>
+
+## Complete Example
+
+Here's a complete `skills.json` for a production skill:
+
+```json
+{
+  "name": "@tank/google-sheets",
+  "version": "2.1.0",
+  "description": "Read, write, format, and analyze Google Sheets data through the Sheets API",
+  "skills": {
+    "@tank/google-auth": "^2.0.0"
+  },
+  "permissions": {
+    "network": {
+      "outbound": ["*.googleapis.com", "accounts.google.com"]
+    },
+    "filesystem": {
+      "read": ["./**"]
+    },
+    "subprocess": false
+  },
+  "repository": "https://github.com/tankpkg/google-sheets",
+  "visibility": "public",
+  "audit": {
+    "min_score": 8.0
+  }
+}
+```
+
+## Validation
+
+Tank validates your manifest in several scenarios:
+
+1. **`tank init`** — Creates a valid template
+2. **`tank publish`** — Validates before publishing
+3. **`tank install`** — Validates downloaded packages
+
+### Common Validation Errors
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Name must be scoped` | Missing `@org/` prefix | Rename to `@yourorg/skill-name` |
+| `Version must be valid semver` | Invalid version format | Use `1.2.3` format |
+| `Description must be 500 characters or fewer` | Description too long | Shorten description |
+| `Repository must be a valid URL` | Invalid URL format | Use full URL: `https://github.com/...` |
+| `Unknown property` | Extra field in manifest | Remove unrecognized fields (strict mode) |
+
+## Semver Resolution
+
+Tank uses a custom semver resolver (`packages/shared/src/lib/resolver.ts`) to resolve dependency ranges:
+
+```typescript
+// Resolve a version range to the best available version
+resolve(range: string, versions: string[]): string | null
+
+// Sort versions in descending order (newest first)
+sortVersions(versions: string[]): string[]
+```
+
+### Resolution Examples
+
+```typescript
+// Caret range
+resolve("^1.2.0", ["1.0.0", "1.2.5", "1.3.0", "2.0.0"])
+// Returns: "1.3.0" (highest compatible)
+
+// Tilde range
+resolve("~1.2.0", ["1.2.0", "1.2.5", "1.3.0"])
+// Returns: "1.2.5" (highest patch)
+
+// Exact version
+resolve("1.2.0", ["1.2.0", "1.2.5"])
+// Returns: "1.2.0" (exact match)
+```
+
+<Accordion title="FAQ: Should I use ^ or ~ for dependencies?">
+  **Use `^` (caret) by default** — it allows minor and patch updates, which usually include bug fixes and new features without breaking changes.
+
+  **Use `~` (tilde) for stability** — it only allows patch updates, useful when you need strict control over which features are available.
+
+  **Use exact versions for critical dependencies** — when you need absolute reproducibility (rare).
+</Accordion>
+
+## Next Steps
+
+- [Lockfile](/concepts/lockfile) — How Tank ensures reproducible installs
+- [Permissions](/concepts/permissions) — Permission schema and enforcement
+- [Security Scanning](/concepts/security-scanning) — How Tank validates skills before publishing

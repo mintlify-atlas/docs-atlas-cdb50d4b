@@ -1,0 +1,521 @@
+---
+title: Skill Management Commands
+description: Install, publish, and manage AI agent skills
+---
+
+Manage AI agent skills with Tank's skill management commands. These commands handle the entire skill lifecycle from creation to installation.
+
+## init
+
+Create a new `skills.json` in the current directory.
+
+```bash
+tank init
+```
+
+### Description
+
+Interactively creates a new `skills.json` manifest for a skill package. Prompts for:
+
+- Skill name (lowercase, alphanumeric + hyphens, optionally scoped `@org/name`)
+- Version (semver format, default `0.1.0`)
+- Description
+- Visibility (public/private)
+- Author (default from `~/.tank/config.json`)
+
+### Options
+
+No options (interactive prompts).
+
+### Examples
+
+```bash
+tank init
+# Skill name: @acme/hello-world
+# Version: (0.1.0)
+# Description: A friendly greeting skill
+# Make this skill private? (y/N) N
+# Author: (john-doe)
+# ✓ Created skills.json
+```
+
+### Generated File
+
+```json
+{
+  "name": "@acme/hello-world",
+  "version": "0.1.0",
+  "description": "A friendly greeting skill",
+  "visibility": "public",
+  "skills": {},
+  "permissions": {
+    "network": { "outbound": [] },
+    "filesystem": { "read": [], "write": [] },
+    "subprocess": false
+  }
+}
+```
+
+### Validation Rules
+
+- **Name**: Max 214 characters, must match `/^(@[a-z0-9-]+\/)?[a-z0-9][a-z0-9-]*$/`
+- **Version**: Must be valid semver (e.g., `1.0.0`, `1.0.0-beta.1`)
+- **Visibility**: Defaults to `private` for scoped packages (`@org/name`)
+
+---
+
+## install
+
+Install a skill from the Tank registry, or all skills from lockfile.
+
+```bash
+tank install [name] [version-range]
+tank i [name] [version-range]  # alias
+```
+
+### Arguments
+
+<ParamField path="name" type="string" optional>
+  Skill name (e.g., `@org/skill-name`). Omit to install all skills from `skills.lock`.
+</ParamField>
+
+<ParamField path="version-range" type="string" default="*">
+  Semver range (e.g., `^1.0.0`, `~2.1.0`, `>=1.0.0 <2.0.0`). Default: `*` (latest).
+</ParamField>
+
+### Options
+
+<ParamField path="-g, --global" type="flag">
+  Install skill globally to `~/.tank/skills/` (available to all projects).
+</ParamField>
+
+### Examples
+
+```bash
+# Install specific skill (latest version)
+tank install @tank/typescript
+
+# Install with version range
+tank install @tank/typescript ^1.0.0
+
+# Install all skills from lockfile
+tank install
+
+# Install globally
+tank install -g @tank/typescript
+
+# Install all from global lockfile
+tank install -g
+```
+
+### Flow
+
+1. Reads or creates `skills.json` (local mode) or reads `skills.lock` (global mode)
+2. Fetches available versions from `GET /api/v1/skills/{name}/versions`
+3. Resolves best version using semver (from `@tank/shared` resolver)
+4. Checks if already installed (skips if same version in lockfile)
+5. Fetches version metadata from `GET /api/v1/skills/{name}/{version}`
+6. **Validates permissions** against project budget (local mode)
+7. **Validates audit score** against minimum threshold (if configured)
+8. Downloads tarball from signed URL
+9. **Verifies SHA-512 integrity** (computed vs. registry signature)
+10. Extracts tarball with security filters
+11. Updates `skills.json` (local) and `skills.lock`
+12. Links skill to detected AI agents (failures are warnings)
+
+### Security Filters
+
+During extraction, Tank rejects:
+
+- Absolute paths
+- Path traversal attempts (`../`)
+- Symlinks and hardlinks
+- Files exceeding 100MB total uncompressed size
+
+### Permission Budget Enforcement
+
+If `skills.json` defines a permission budget, install fails if skill requests permissions outside budget:
+
+```json
+{
+  "permissions": {
+    "network": { "outbound": ["*.example.com"] },
+    "filesystem": { "read": ["./src/**"], "write": ["./dist/**"] },
+    "subprocess": false
+  }
+}
+```
+
+### Audit Score Threshold
+
+If `skills.json` defines `audit.min_score`, install fails if skill's audit score is below threshold:
+
+```json
+{
+  "audit": {
+    "min_score": 7
+  }
+}
+```
+
+### Exit Codes
+
+- `0` - Skill installed successfully
+- `1` - Install failed (network error, permission denied, integrity mismatch, etc.)
+
+---
+
+## update
+
+Update skills to latest versions within their semver ranges.
+
+```bash
+tank update [name]
+tank up [name]  # alias
+```
+
+### Arguments
+
+<ParamField path="name" type="string" optional>
+  Skill name to update. Omit to update all skills.
+</ParamField>
+
+### Options
+
+<ParamField path="-g, --global" type="flag">
+  Update globally installed skills.
+</ParamField>
+
+### Examples
+
+```bash
+# Update all skills
+tank update
+
+# Update specific skill
+tank update @tank/typescript
+
+# Update all global skills
+tank update -g
+
+# Update specific global skill
+tank update -g @tank/typescript
+```
+
+### Flow
+
+1. Reads version range from `skills.json` (local) or determines `>=current` (global)
+2. Fetches available versions from registry
+3. Resolves latest version within range using semver
+4. Checks current installed version from `skills.lock`
+5. If resolved version is newer, calls `installCommand` to upgrade
+6. Prints summary of updated skills
+
+### Exit Codes
+
+- `0` - Update completed (may have updated 0 skills if all up-to-date)
+- `1` - Update failed
+
+---
+
+## remove
+
+Remove an installed skill.
+
+```bash
+tank remove <name>
+tank rm <name>   # alias
+tank r <name>    # alias
+```
+
+### Arguments
+
+<ParamField path="name" type="string" required>
+  Skill name to remove (e.g., `@org/skill-name`).
+</ParamField>
+
+### Options
+
+<ParamField path="-g, --global" type="flag">
+  Remove a globally installed skill.
+</ParamField>
+
+### Examples
+
+```bash
+# Remove local skill
+tank remove @tank/typescript
+
+# Remove global skill
+tank remove -g @tank/typescript
+```
+
+### Flow
+
+1. Removes skill from `skills.json` (local mode)
+2. Removes all matching entries from `skills.lock` (supports multiple versions)
+3. Unlinks skill from all AI agents (failures are warnings)
+4. Deletes agent-skills wrapper directory
+5. Deletes `.tank/skills/{name}/` directory
+
+### Exit Codes
+
+- `0` - Skill removed successfully
+- `1` - Skill not found or removal failed
+
+---
+
+## publish
+
+Pack and publish a skill to the Tank registry.
+
+```bash
+tank publish
+tank pub  # alias
+```
+
+### Options
+
+<ParamField path="--dry-run" type="flag">
+  Validate and pack without uploading. Verifies auth with server.
+</ParamField>
+
+<ParamField path="--private" type="flag">
+  Publish skill as private (sets `visibility: "private"`).
+</ParamField>
+
+<ParamField path="--visibility" type="string">
+  Explicitly set visibility (`public` or `private`). Overrides `--private`.
+</ParamField>
+
+### Examples
+
+```bash
+# Publish skill
+tank publish
+
+# Dry run (validate without uploading)
+tank publish --dry-run
+
+# Publish as private
+tank publish --private
+
+# Explicitly set visibility
+tank publish --visibility private
+```
+
+### Flow
+
+1. Checks authentication (requires valid token)
+2. Reads `skills.json` from current directory
+3. Packs directory into tarball with security filters
+4. If `--dry-run`, prints summary and verifies token, then exits
+5. **POST** `/api/v1/skills` with manifest → receives `uploadUrl` and `versionId`
+6. **PUT** tarball to signed `uploadUrl`
+7. **POST** `/api/v1/skills/confirm` with integrity data
+8. Prints success message
+
+### Packing Behavior
+
+**Always Ignored** (security filters):
+
+- `.git/`
+- `node_modules/`
+- `.env*`
+- `.DS_Store`
+- `*.log`
+- `dist/`
+- `build/`
+
+**Size Limits**:
+
+- Max 1,000 files per tarball
+- Max 50MB total (enforced in packer)
+
+### Dry Run Output
+
+```bash
+tank publish --dry-run
+# name:    @acme/hello-world
+# version: 1.0.0
+# visibility: public
+# size:    1.2 MB (8 files)
+# tarball: 456.7 KB (compressed)
+# ✓ Auth verified with server.
+# ✓ Dry run complete — no files were uploaded.
+```
+
+### Exit Codes
+
+- `0` - Publish succeeded
+- `1` - Publish failed (auth error, validation error, version conflict, network error)
+
+### Error Messages
+
+- `"Not logged in. Run: tank login"` - No auth token in config
+- `"Version already exists. Bump the version in skills.json"` - HTTP 409 conflict
+- `"Authentication failed. Your token may be expired or invalid."` - HTTP 401
+- `"Publish failed: <error>"` - HTTP 403/404 or validation error
+
+---
+
+## search
+
+Search for skills in the Tank registry.
+
+```bash
+tank search <query>
+tank s <query>  # alias
+```
+
+### Arguments
+
+<ParamField path="query" type="string" required>
+  Search query (full-text search across name and description).
+</ParamField>
+
+### Examples
+
+```bash
+tank search typescript
+# NAME                           VERSION    SCORE   DESCRIPTION
+# @tank/typescript               1.2.0      8.5     TypeScript analysis and refactoring
+# @acme/ts-helper                0.5.0      7.2     TypeScript code generation utilities
+#
+# 2 skills found
+```
+
+### Output Format
+
+Columns:
+
+- **NAME** - Skill name (bold)
+- **VERSION** - Latest published version
+- **SCORE** - Audit score (color-coded: green ≥7, yellow 4-6.9, red &lt;4)
+- **DESCRIPTION** - Truncated to 60 characters
+
+### Limit
+
+Returns max 20 results per query.
+
+---
+
+## info
+
+Show detailed information about a skill.
+
+```bash
+tank info <name>
+tank show <name>  # alias
+```
+
+### Arguments
+
+<ParamField path="name" type="string" required>
+  Skill name (e.g., `@org/skill-name`).
+</ParamField>
+
+### Examples
+
+```bash
+tank info @tank/typescript
+#
+# @tank/typescript
+#
+# Description:   TypeScript analysis and refactoring
+# Version:       1.2.0
+# Visibility:    public
+# Publisher:     Tank Team
+# Audit Score:   8.5/10
+# Created:       2026-01-15
+#
+# Permissions:
+#   Network:      *.npmjs.com, registry.npmjs.org
+#   Filesystem:   ./src/**, ./dist/** (read), ./dist/** (write)
+#   Subprocess:   no
+#
+# Install: tank install @tank/typescript
+```
+
+### Exit Codes
+
+- `0` - Skill info displayed
+- `1` - Skill not found or network error
+
+---
+
+## link
+
+Link current skill directory to AI agent directories (for development).
+
+```bash
+tank link
+tank ln  # alias
+```
+
+### Description
+
+Creates symlinks from detected AI agent skill directories to the current skill directory. Used during skill development to test changes without publishing.
+
+### Examples
+
+```bash
+# In skill directory
+cd ~/projects/my-skill
+tank link
+# ✓ OpenCode
+# ✓ Linked my-skill to 1 agent(s)
+```
+
+### Flow
+
+1. Reads `skills.json` from current directory (requires `name` field)
+2. Detects installed AI agents (OpenCode, etc.)
+3. If `SKILL.md` exists and has frontmatter, uses current directory as source
+4. Otherwise, prepares agent-skills wrapper directory in `~/.tank/agent-skills/`
+5. Creates symlinks in each agent's skills directory
+6. Writes entry to `~/.tank/links.json` with `source: "dev"`
+
+### Detected Agents
+
+- OpenCode (`~/.config/opencode/skills/`)
+- More agents coming soon
+
+### Exit Codes
+
+- `0` - Skill linked successfully (or already linked)
+- `1` - No `skills.json` found or linking failed
+
+---
+
+## unlink
+
+Remove skill symlinks from AI agent directories.
+
+```bash
+tank unlink
+```
+
+### Description
+
+Removes symlinks created by `tank link`.
+
+### Examples
+
+```bash
+cd ~/projects/my-skill
+tank unlink
+# ✓ Unlinked my-skill from 1 agent(s)
+```
+
+### Flow
+
+1. Reads `skills.json` from current directory
+2. Removes symlinks from all agent skill directories
+3. Removes entry from `~/.tank/links.json`
+4. Deletes agent-skills wrapper directory from `~/.tank/agent-skills/`
+
+### Exit Codes
+
+- `0` - Skill unlinked successfully (or not linked)
+- `1` - No `skills.json` found or unlinking failed

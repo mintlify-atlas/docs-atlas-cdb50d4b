@@ -1,0 +1,213 @@
+---
+title: Project Setup
+description: Initialize Tank projects with tank init
+---
+
+# Project Setup
+
+The `tank init` command creates a new `skills.json` manifest for publishing AI agent skills.
+
+## tank init
+
+Interactively create a `skills.json` manifest in the current directory.
+
+```bash
+tank init
+```
+
+### Interactive Prompts
+
+```bash
+$ tank init
+? Skill name: my-skill
+? Version: 0.1.0
+? Description: AI skill for data processing
+? Make this skill private? No
+? Author: Alice Developer
+✓ Created skills.json
+```
+
+### Generated Manifest
+
+```json
+{
+  "name": "my-skill",
+  "version": "0.1.0",
+  "description": "AI skill for data processing",
+  "visibility": "public",
+  "skills": {},
+  "permissions": {
+    "network": {
+      "outbound": []
+    },
+    "filesystem": {
+      "read": [],
+      "write": []
+    },
+    "subprocess": false
+  }
+}
+```
+
+## Field Validation
+
+### Name
+
+- **Pattern:** Lowercase alphanumeric + hyphens, optionally scoped
+- **Examples:** `my-skill`, `@myorg/my-skill`
+- **Max length:** 214 characters
+- **Invalid:** `MySkill`, `my_skill`, `my skill`
+
+```bash
+# Valid names
+my-skill
+data-processor
+@acme/analytics
+@org-name/skill-name-123
+
+# Invalid names
+My-Skill           # Uppercase
+my_skill           # Underscores
+my skill           # Spaces
+-my-skill          # Leading hyphen
+```
+
+### Version
+
+- **Pattern:** Semantic versioning (semver)
+- **Format:** `MAJOR.MINOR.PATCH[-prerelease][+build]`
+- **Examples:** `1.0.0`, `2.1.3-beta`, `0.1.0+20240101`
+
+```bash
+# Valid versions
+0.1.0
+1.0.0
+2.3.4-alpha
+1.0.0-beta.1
+2.0.0+build.123
+
+# Invalid versions
+1.0              # Missing patch
+v1.0.0           # Prefix
+1.0.0.0          # Too many parts
+```
+
+## Scoped Packages
+
+Use scoped names for organization-owned skills:
+
+```bash
+$ tank init
+? Skill name: @myorg/analytics
+? Version: 0.1.0
+? Description: Analytics skill for MyOrg
+? Make this skill private? Yes  # Scoped packages default to private
+? Author: MyOrg Team
+✓ Created skills.json
+```
+
+Scoped packages:
+- Default to `private` visibility
+- Require organization membership to publish
+- Use format `@org/name`
+
+## Visibility
+
+### Public Skills
+
+- Visible to all users in the registry
+- Anyone can install without authentication
+- Indexed in search results
+- Default for non-scoped packages
+
+### Private Skills
+
+- Only visible to authorized users
+- Require authentication to install
+- Not indexed in public search
+- Default for scoped packages (`@org/name`)
+
+## Overwriting Existing Files
+
+If `skills.json` exists, `tank init` prompts for confirmation:
+
+```bash
+$ tank init
+⚠ skills.json already exists in this directory.
+? Overwrite existing skills.json? (y/N)
+```
+
+- **Yes** - Replaces existing file (data is lost)
+- **No** - Aborts without changes
+
+## Default Values
+
+- **Name:** Current directory name
+- **Version:** `0.1.0`
+- **Description:** Empty string
+- **Visibility:** `public` (or `private` if scoped)
+- **Author:** Name from `~/.tank/config.json` (if logged in)
+
+## Permissions Model
+
+The generated manifest includes an empty permissions budget:
+
+```json
+{
+  "permissions": {
+    "network": {
+      "outbound": []  // Allowed domains
+    },
+    "filesystem": {
+      "read": [],     // Allowed read paths
+      "write": []     // Allowed write paths
+    },
+    "subprocess": false  // Subprocess execution
+  }
+}
+```
+
+See [Permissions](/concepts/permissions) for configuration details.
+
+## Next Steps
+
+After creating `skills.json`:
+
+1. **Add skill files** - Create your skill implementation
+2. **Configure permissions** - Define required permissions in `skills.json`
+3. **Test locally** - Use `tank link` to test with agents
+4. **Publish** - Run `tank publish` to upload to registry
+
+```bash
+# Example workflow
+tank init
+# ... add skill files ...
+tank publish --dry-run  # Preview
+tank publish            # Upload
+```
+
+## Validation
+
+`tank init` validates the generated manifest against the skills.json schema before writing. If validation fails:
+
+```bash
+✗ Generated skills.json is invalid:
+  name: Name must be lowercase, alphanumeric + hyphens
+  version: Version must be valid semver (e.g. 1.0.0)
+```
+
+Common validation errors:
+- Invalid name format (uppercase, special characters)
+- Invalid version format (not semver)
+- Missing required fields
+
+## Manual Editing
+
+After `tank init`, you can manually edit `skills.json` to:
+
+- Add dependencies to `skills` object
+- Configure permission budget
+- Add metadata (homepage, repository, keywords)
+- Set audit score threshold (`audit.min_score`)
+
+See [skills.json Reference](/api/schemas/skills-json) for full schema.

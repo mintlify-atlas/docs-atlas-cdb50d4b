@@ -1,0 +1,304 @@
+---
+title: 'Web Interface'
+description: 'Browse and discover AI agent skills on the Tank registry at tankpkg.dev'
+---
+
+# Web Registry Interface
+
+The Tank web registry at [tankpkg.dev](https://tankpkg.dev) provides a searchable catalog of verified AI agent skills. Every skill is scanned for security vulnerabilities before being listed.
+
+## Browsing Skills
+
+### Skills Directory
+
+Visit [tankpkg.dev/skills](https://tankpkg.dev/skills) to browse all published skills:
+
+- **Grid View**: Skills displayed as cards with key metadata
+- **Search**: Full-text search across skill names and descriptions  
+- **Pagination**: 20 skills per page
+- **Filtering**: Filter by audit score, downloads, or stars
+
+```tsx
+// Search query example
+https://tankpkg.dev/skills?q=web+scraping&page=2
+```
+
+### Skill Cards
+
+Each skill card displays:
+
+- **Name**: Skill identifier (e.g., `@acme/web-scraper`)
+- **Description**: Short summary from SKILL.md
+- **Version Badge**: Latest published version
+- **Audit Score**: Security score (0-10)
+- **Downloads**: Total download count
+- **Stars**: User favorites count
+- **Visibility**: Public or Private badge
+
+## Skill Detail Pages
+
+### Overview Tab
+
+Click any skill to view its detail page at `/skills/{skill-name}`:
+
+```tsx
+// Example URL
+https://tankpkg.dev/skills/@acme/web-scraper
+```
+
+**Key Sections:**
+
+1. **Header**
+   - Skill name and description
+   - Latest version number
+   - Publisher information (user or organization)
+   - Star/unstar button (requires login)
+   - Download counter
+
+2. **Install Command**
+   - One-click copy command:
+     ```bash
+     tank install @acme/web-scraper@1.2.3
+     ```
+
+3. **README**
+   - Rendered markdown from the skill's README.md
+   - Supports GitHub-flavored markdown
+   - Code syntax highlighting
+
+4. **Metadata Table**
+   - Published date
+   - Package size
+   - File count
+   - License
+   - Repository URL (if provided)
+
+### Security Tab
+
+View detailed security analysis:
+
+**Audit Score Breakdown** (8 checks, max 10 points):
+
+1. SKILL.md present (1 pt)
+2. Description present (1 pt)
+3. Permissions declared (1 pt)
+4. No security issues (2 pts)
+5. Permission extraction match (2 pts)
+6. File count reasonable (&lt;100 files) (1 pt)
+7. README documentation (1 pt)
+8. Package size reasonable (&lt;5 MB) (1 pt)
+
+**Scan Pipeline Visualization:**
+
+- Stage 0: Ingest (file hashing)
+- Stage 1: Structure analysis
+- Stage 2: Static code analysis (AST)
+- Stage 3: Injection detection
+- Stage 4: Secret scanning
+- Stage 5: Supply chain analysis
+
+**Findings List:**
+
+- Severity levels: Critical, High, Medium, Low
+- Grouped by category
+- Expandable details with file paths and line numbers
+- SARIF-compatible output
+
+**Verdict Rules:**
+
+- 1+ Critical finding → FAIL
+- 4+ High findings → FAIL
+- 1-3 High findings → FLAGGED
+- Only Medium/Low → PASS_WITH_NOTES
+- No findings → PASS
+
+### Versions Tab
+
+Browse all published versions:
+
+| Version | Published | Audit Score | Status |
+|---------|-----------|-------------|---------|
+| 1.2.3   | Mar 3, 2026 | 8/10        | completed |
+| 1.2.2   | Feb 28, 2026 | 7/10        | completed |
+| 1.2.1   | Feb 15, 2026 | 6/10        | completed |
+
+- Click any version to view that version's detail page
+- Each version has independent security analysis
+- Audit status: `pending`, `scanning`, `completed`, `errored`
+
+### Files Tab
+
+Explore the skill's file structure:
+
+- **File Tree**: Collapsible directory browser
+- **File Viewer**: Syntax-highlighted code viewer
+- **Navigation**: Click any file to view contents
+- **Breadcrumbs**: Navigate back through directories
+
+```
+@acme/web-scraper/
+├── SKILL.md
+├── README.md
+├── src/
+│   ├── index.ts
+│   └── scraper.ts
+└── package.json
+```
+
+### Permissions Tab
+
+View declared and detected permissions:
+
+**Declared Permissions** (from SKILL.md):
+
+```json
+{
+  "network": {
+    "outbound": ["https://example.com"]
+  },
+  "filesystem": {
+    "read": ["./data"],
+    "write": ["./output"]
+  },
+  "subprocess": false
+}
+```
+
+**Extracted Permissions** (detected by scanner):
+
+- Network calls detected in code
+- File system operations
+- Subprocess executions
+- Environment variable access
+
+**Permission Escalation Detection:**
+
+- Compares declared vs. extracted permissions
+- Flags undeclared operations
+- Warns on version-to-version escalation
+
+## Interactive Features
+
+### Starring Skills
+
+1. Click the star icon on any skill page
+2. Requires authentication (GitHub OAuth)
+3. View your starred skills at `/dashboard`
+
+### Downloading Tarballs
+
+1. Click "Download .tgz" button on skill page
+2. Generates signed URL (valid for 60 seconds)
+3. Downloads skill tarball directly
+4. Increments download counter
+
+```bash
+# Alternative: Use CLI
+tank download @acme/web-scraper@1.2.3
+```
+
+### Tracking Views
+
+Skill views are tracked automatically:
+
+- Increments view count on page load
+- Debounced (1 view per IP per hour)
+- Displayed in skill analytics
+
+## Search Functionality
+
+### Full-Text Search
+
+The registry uses PostgreSQL GIN indexes for fast search:
+
+```sql
+-- Search vector indexes:
+-- - skill name (weight A)
+-- - description (weight B)
+-- - readme content (weight C)
+```
+
+**Search Features:**
+
+- Fuzzy matching with trigram similarity
+- Ranked results (best matches first)
+- Highlights matching terms
+- Supports partial words
+
+**Example Queries:**
+
+```
+# Search by keyword
+web scraping
+
+# Search by organization
+@acme
+
+# Search by feature
+API client
+```
+
+### API Search Endpoint
+
+Programmatic access via REST API:
+
+```bash
+curl https://tankpkg.dev/api/v1/search?q=web&limit=10
+```
+
+**Response:**
+
+```json
+{
+  "results": [
+    {
+      "name": "@acme/web-scraper",
+      "description": "Extract data from web pages",
+      "latestVersion": "1.2.3",
+      "auditScore": 8,
+      "downloads": 1234,
+      "stars": 56
+    }
+  ],
+  "total": 42,
+  "page": 1,
+  "limit": 10
+}
+```
+
+## Performance
+
+### Incremental Static Regeneration (ISR)
+
+- Skill pages cached for 60 seconds at CDN
+- Survives serverless cold starts
+- Reduces database load by 95%
+
+### Image Optimization
+
+- Organization logos served via Next.js Image
+- Automatic WebP conversion
+- Lazy loading for below-fold content
+
+### Database Queries
+
+- Indexed queries for common patterns
+- Connection pooling via Drizzle ORM
+- Read replicas for skill browsing (future)
+
+## Mobile Experience
+
+Fully responsive design:
+
+- **Breakpoints**: Mobile (320px+), Tablet (768px+), Desktop (1024px+)
+- **Touch-optimized**: Large tap targets, swipe gestures
+- **Progressive Enhancement**: Works without JavaScript
+- **Dark Mode**: Respects system preference
+
+---
+
+**Next Steps:**
+
+- [Publish your first skill](/cli/publishing)
+- [Manage organizations](/registry/organizations)
+- [Generate API keys](/registry/api-keys)

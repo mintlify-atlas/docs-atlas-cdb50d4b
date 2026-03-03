@@ -1,0 +1,492 @@
+---
+title: 'API Keys'
+description: 'Create API tokens for CLI authentication, service accounts, and CI/CD integration'
+---
+
+# API Keys
+
+API keys enable programmatic access to the Tank registry for CLI operations, CI/CD pipelines, and automation.
+
+## Creating API Keys
+
+### Via Web UI
+
+1. Navigate to [tankpkg.dev/tokens](https://tankpkg.dev/tokens)
+2. Click **"Create New Token"**
+3. Configure the token:
+
+   - **Token Name**: Descriptive label (e.g., "CI/CD Pipeline")
+   - **Expires In**: Days until expiration (1-365, default 90)
+   - **Scopes**: Permissions for the token
+
+4. Click **"Create"**
+5. **Copy the token immediately** — you won't see it again
+
+**Token Format:**
+
+```
+tank_abc123def456ghi789...
+```
+
+- Prefix: `tank_`
+- Length: 64 characters (prefix + 59 random bytes)
+- Encoding: Base58 (URL-safe, no ambiguous characters)
+
+### Via CLI OAuth Flow
+
+The CLI can generate tokens automatically:
+
+```bash
+# Start OAuth flow
+tank login
+
+# Opens browser at:
+# https://tankpkg.dev/cli-auth/authorize?code=xyz789
+
+# After approval, token saved to:
+# ~/.tank/config.json
+```
+
+**OAuth Flow Steps:**
+
+1. CLI calls `POST /api/v1/cli-auth/start`
+   - Returns `pollToken` and `userCode`
+2. CLI opens browser to `/cli-auth/authorize?code={userCode}`
+3. User logs in via GitHub OAuth
+4. User clicks "Authorize Tank CLI"
+5. CLI polls `POST /api/v1/cli-auth/exchange`
+   - Exchanges `pollToken` for API key
+6. CLI stores API key in `~/.tank/config.json`
+
+**Polling Implementation:**
+
+```typescript
+// apps/cli/src/commands/login.ts (excerpt)
+let attempts = 0;
+const maxAttempts = 60; // 5 minutes
+
+while (attempts < maxAttempts) {
+  const res = await fetch(`${REGISTRY_URL}/api/v1/cli-auth/exchange`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pollToken }),
+  });
+
+  if (res.ok) {
+    const { apiKey } = await res.json();
+    saveConfig({ apiKey });
+    console.log('Login successful!');
+    return;
+  }
+
+  await sleep(5000); // 5 seconds
+  attempts++;
+}
+```
+
+## Token Scopes
+
+Scopes control what operations a token can perform:
+
+### Available Scopes
+
+| Scope | Permissions |
+|-------|-------------|
+| `skills:read` | Download skills, view metadata, search registry |
+| `skills:publish` | Publish new skills, update existing skills |
+| `skills:admin` | Delete skills, manage versions, moderate content |
+
+**Scope Hierarchy:**
+
+- `skills:admin` includes `skills:publish` and `skills:read`
+- `skills:publish` includes `skills:read`
+- `skills:read` is always granted (minimum permission)
+
+**Scope Validation:**
+
+```typescript
+// apps/web/app/(dashboard)/tokens/actions.ts
+const allowedScopes = new Set(['skills:read', 'skills:publish', 'skills:admin']);
+
+function normalizeScopes(scopes: string[]): string[] {
+  const normalized = Array.from(new Set(
+    scopes
+      .map(s => s.trim())
+      .filter(s => allowedScopes.has(s))
+  ));
+
+  // Always include skills:read
+  if (!normalized.includes('skills:read')) {
+    normalized.push('skills:read');
+  }
+
+  return normalized;
+}
+```
+
+### Choosing Scopes
+
+**Development:**
+
+```json
+{
+  "name": "Local Development",
+  "scopes": ["skills:read", "skills:publish"]
+}
+```
+
+**CI/CD Pipeline:**
+
+```json
+{
+  "name": "GitHub Actions",
+  "scopes": ["skills:publish"]
+}
+```
+
+**Read-Only Bot:**
+
+```json
+{
+  "name": "Metrics Collector",
+  "scopes": ["skills:read"]
+}
+```
+
+## Using API Keys
+
+### CLI Configuration
+
+Store your API key in `~/.tank/config.json`:
+
+```json
+{
+  "apiKey": "tank_abc123def456...",
+  "registry": "https://tankpkg.dev"
+}
+```
+
+The CLI automatically includes the key in requests:
+
+```typescript
+// apps/cli/src/lib/api-client.ts (excerpt)
+const headers: HeadersInit = {
+  'Content-Type': 'application/json',
+};
+
+if (config.apiKey) {
+  headers['Authorization'] = `Bearer ${config.apiKey}`;
+}
+
+const response = await fetch(url, { method, headers, body });
+```
+
+### Direct API Usage
+
+Include the token in the `Authorization` header:
+
+```bash
+curl https://tankpkg.dev/api/v1/skills \
+  -H "Authorization: Bearer tank_abc123def456..." \
+  -H "Content-Type: application/json" \
+  -d '{
+    "manifest": { ... },
+    "readme": "...",
+    "files": [ ... ]
+  }'
+```
+
+**Authentication Verification:**
+
+```typescript
+// apps/web/lib/auth-helpers.ts
+export async function verifyCliAuth(
+  request: Request,
+  requiredScopes?: string[]
+): Promise<{ userId: string; keyId: string } | null> {
+  const authHeader = request.headers.get('Authorization');
+  if (!authHeader?.startsWith('Bearer tank_')) {
+    return null;
+  }
+
+  const token = authHeader.slice(7); // Remove 'Bearer '
+  const verified = await auth.api.verifyApiKey({ key: token });
+
+  if (!verified?.valid) {
+    return null;
+  }
+
+  // Check scopes if required
+  if (requiredScopes?.length) {
+    const grantedScopes = verified.permissions?.skills ?? [];
+    const hasScope = requiredScopes.every(s => grantedScopes.includes(s));
+    if (!hasScope) {
+      return null;
+    }
+  }
+
+  return { userId: verified.userId, keyId: verified.id };
+}
+```
+
+## Token Management
+
+### Listing Tokens
+
+View all your tokens at `/tokens`:
+
+| Name | Key | Created | Last Used | Expires | Scopes | Actions |
+|------|-----|---------|-----------|---------|--------|----------|
+| CI/CD Pipeline | `tank_abc...` | Mar 3, 2026 | 2h ago | Mar 3, 2027 | `skills:publish` | Revoke |
+| Local Dev | `tank_def...` | Feb 1, 2026 | Never | May 1, 2026 | `skills:read` | Revoke |
+
+**Display Format:**
+
+```typescript
+function getDisplayKey(token: ApiKeyItem): string {
+  if (token.start) return `${token.start}...`;
+  if (token.prefix) return `${token.prefix}...`;
+  return 'tank_...';
+}
+```
+
+### Revoking Tokens
+
+1. Navigate to `/tokens`
+2. Click **"Revoke"** next to the token
+3. Confirm revocation (cannot be undone)
+
+**Server Action:**
+
+```typescript
+export async function revokeToken(keyId: string) {
+  const session = await auth.api.getSession({ headers: reqHeaders });
+  if (!session) throw new Error('Unauthorized');
+
+  await auth.api.deleteApiKey({
+    body: { keyId },
+    headers: reqHeaders,
+  });
+
+  // Audit log
+  await db.insert(auditEvents).values({
+    action: 'api_key.revoke',
+    actorId: session.user.id,
+    targetType: 'api_key',
+    targetId: keyId,
+    metadata: {},
+  });
+}
+```
+
+**Effects:**
+
+- Token invalidated immediately
+- All requests using this token return `401 Unauthorized`
+- Cannot be unrevoked — create a new token instead
+
+### Rotating Tokens
+
+Best practice: Rotate tokens regularly
+
+```bash
+# 1. Create new token
+tank login  # or via web UI
+
+# 2. Update CI/CD secrets
+gh secret set TANK_API_KEY --body "tank_new_token"
+
+# 3. Verify new token works
+tank whoami
+
+# 4. Revoke old token via web UI
+```
+
+## CI/CD Integration
+
+### GitHub Actions
+
+```yaml
+name: Publish Skill
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install Tank CLI
+        run: npm install -g @tank/cli
+
+      - name: Configure Tank
+        run: |
+          mkdir -p ~/.tank
+          echo '{"apiKey":"'$TANK_API_KEY'"}' > ~/.tank/config.json
+        env:
+          TANK_API_KEY: ${{ secrets.TANK_API_KEY }}
+
+      - name: Publish Skill
+        run: tank publish --yes
+```
+
+**Required Secrets:**
+
+- `TANK_API_KEY`: Token with `skills:publish` scope
+
+### GitLab CI
+
+```yaml
+publish:
+  stage: deploy
+  image: node:24
+  script:
+    - npm install -g @tank/cli
+    - mkdir -p ~/.tank
+    - echo "{\"apiKey\":\"$TANK_API_KEY\"}" > ~/.tank/config.json
+    - tank publish --yes
+  only:
+    - tags
+  variables:
+    TANK_API_KEY: $TANK_API_KEY
+```
+
+### CircleCI
+
+```yaml
+version: 2.1
+jobs:
+  publish:
+    docker:
+      - image: cimg/node:24.0
+    steps:
+      - checkout
+      - run:
+          name: Install Tank CLI
+          command: npm install -g @tank/cli
+      - run:
+          name: Publish Skill
+          command: |
+            mkdir -p ~/.tank
+            echo '{"apiKey":"'$TANK_API_KEY'"}' > ~/.tank/config.json
+            tank publish --yes
+
+workflows:
+  publish-on-tag:
+    jobs:
+      - publish:
+          filters:
+            tags:
+              only: /^v.*/
+```
+
+## Service Accounts
+
+For enterprise deployments, use service accounts instead of user tokens:
+
+**Admin API Endpoint:**
+
+```bash
+POST /api/admin/service-accounts
+```
+
+**Request:**
+
+```json
+{
+  "name": "Production CI/CD",
+  "description": "Automated skill publishing",
+  "scopes": ["skills:publish"]
+}
+```
+
+**Response:**
+
+```json
+{
+  "id": "sa_xyz789",
+  "name": "Production CI/CD",
+  "apiKey": "tank_service_abc123...",
+  "createdAt": "2026-03-03T12:00:00Z"
+}
+```
+
+**Benefits:**
+
+- Not tied to individual user accounts
+- Survives employee departures
+- Easier to audit (dedicated service account logs)
+- Can have stricter rate limits
+
+## Security Best Practices
+
+### Token Storage
+
+- **Never commit tokens to git**
+- Store in environment variables or secret managers
+- Use `.gitignore` for `~/.tank/config.json`
+- Encrypt tokens at rest in databases
+
+### Token Rotation
+
+- Rotate tokens every 90 days (default expiration)
+- Rotate immediately if compromised
+- Use short-lived tokens for temporary access
+
+### Scope Minimization
+
+- Grant minimum required scopes
+- Use `skills:read` for read-only operations
+- Reserve `skills:admin` for administrators only
+
+### Audit Logging
+
+All token operations are logged:
+
+```sql
+SELECT * FROM audit_events
+WHERE action IN ('api_key.create', 'api_key.revoke')
+ORDER BY created_at DESC;
+```
+
+**Logged Fields:**
+
+- `action`: `api_key.create`, `api_key.revoke`
+- `actorId`: User who performed the action
+- `targetId`: API key ID
+- `metadata`: Token name, scopes, expiration
+
+## Rate Limits
+
+**Per Token:**
+
+- **Default**: 1000 requests per hour
+- **Burst**: Up to 100 requests in 1 minute
+- **Headers**: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`
+
+**Response on Limit:**
+
+```json
+{
+  "error": "Rate limit exceeded",
+  "retryAfter": 3600
+}
+```
+
+**HTTP Status**: `429 Too Many Requests`
+
+---
+
+**Next Steps:**
+
+- [Configure enterprise SSO](/registry/enterprise)
+- [Set up CI/CD publishing](/cli/publishing)
+- [Manage organizations](/registry/organizations)

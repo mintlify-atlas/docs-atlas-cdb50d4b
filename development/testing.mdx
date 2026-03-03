@@ -1,0 +1,530 @@
+---
+title: Testing Guide
+description: How to run and write tests for Tank
+---
+
+Tank has comprehensive test coverage with 461 TypeScript tests and 16 Python tests across unit, integration, end-to-end, and performance testing.
+
+## Running Tests
+
+### All Tests
+
+```bash
+pnpm test
+```
+
+Runs all unit and integration tests across the monorepo (TypeScript + Python).
+
+### Workspace-Specific Tests
+
+```bash
+# CLI tests only
+pnpm test --filter=cli
+
+# Web tests only
+pnpm test --filter=web
+
+# Shared package tests only
+pnpm test --filter=shared
+```
+
+### End-to-End Tests
+
+```bash
+pnpm test:e2e
+```
+
+**Requirements:**
+- `.env.local` with real credentials
+- PostgreSQL database accessible
+- Supabase storage configured
+
+E2E tests run sequentially and spawn real CLI processes to test the full user flow.
+
+### BDD Tests (Playwright)
+
+```bash
+pnpm test:bdd
+```
+
+Runs behavior-driven development tests using Playwright and Gherkin syntax.
+
+### Performance Tests
+
+```bash
+pnpm test:perf
+```
+
+**Requirements:**
+- Real PostgreSQL 17 database
+- Supabase local or production instance
+- No cached builds (tests measure cold performance)
+
+**What it tests:**
+- API route latency (p95 budgets)
+- Web route TTFB and FCP
+- Security scan throughput
+- Database query performance
+
+See [Performance Testing](https://github.com/tankpkg/tank/blob/main/docs/performance-testing.md) for methodology.
+
+## Test Structure
+
+### TypeScript Tests (Vitest)
+
+Tank uses [Vitest](https://vitest.dev/) for all TypeScript testing.
+
+**Location pattern:** `__tests__/*.test.ts` colocated with source code
+
+**Examples:**
+- `apps/cli/src/__tests__/install.test.ts` — CLI install command tests
+- `apps/web/lib/__tests__/audit-score.test.ts` — Audit scoring logic tests
+- `packages/shared/src/__tests__/permissions.test.ts` — Permission schema tests
+
+**Test counts by area:**
+- CLI: 50+ tests (commands, packer, lockfile, linker)
+- Web: 30+ tests (API routes, auth, DB, audit scoring)
+- Shared: 10+ tests (schemas, resolver, validation)
+- E2E: 5 test suites (producer, consumer, admin, integration, on-prem)
+- Performance: 2 test suites (API routes, web routes)
+
+### Python Tests (pytest)
+
+Tank uses [pytest](https://pytest.org/) for Python testing.
+
+**Location pattern:** `test_*.py` files in test directories
+
+**Examples:**
+- `python-api/api/analyze/tests/test_analyze.py` — Security scan endpoint tests
+- `python-api/lib/scan/test_snyk_scanner.py` — Snyk integration tests
+- `python-api/tests/test_skills/test_skill_corpus.py` — Skill corpus validation tests
+
+**Test count:** 16 Python tests
+
+## Writing Tests
+
+### TypeScript Tests
+
+<Steps>
+  <Step title="Create test file">
+    Place test files in `__tests__/` directory next to source:
+    
+    ```
+    src/
+    ├── commands/
+    │   ├── install.ts
+    │   └── __tests__/
+    │       └── install.test.ts
+    ```
+  </Step>
+
+  <Step title="Write test using Vitest">
+    ```typescript
+    import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+    import { installCommand } from '../install';
+
+    describe('install command', () => {
+      beforeEach(() => {
+        // Setup
+      });
+
+      afterEach(() => {
+        // Cleanup
+      });
+
+      it('should install skill from lockfile', async () => {
+        // Arrange
+        const manifest = { skills: { '@test/skill': '1.0.0' } };
+        
+        // Act
+        const result = await installCommand(manifest);
+        
+        // Assert
+        expect(result.success).toBe(true);
+      });
+
+      it('should fail if lockfile hash mismatch', async () => {
+        // Test error case
+        await expect(installCommand({ invalid: true }))
+          .rejects.toThrow('Hash mismatch');
+      });
+    });
+    ```
+  </Step>
+
+  <Step title="Run your test">
+    ```bash
+    pnpm test --filter=cli -- install.test.ts
+    ```
+  </Step>
+</Steps>
+
+### Python Tests
+
+<Steps>
+  <Step title="Create test file">
+    Name files with `test_` prefix:
+    
+    ```
+    lib/scan/
+    ├── stage2.py
+    └── test_stage2.py
+    ```
+  </Step>
+
+  <Step title="Write test using pytest">
+    ```python
+    import pytest
+    from lib.scan.stage2 import analyze_ast
+
+    def test_analyze_ast_detects_subprocess():
+        # Arrange
+        code = "import subprocess\nsubprocess.run(['ls'])"
+        
+        # Act
+        findings = analyze_ast(code)
+        
+        # Assert
+        assert len(findings) > 0
+        assert findings[0]['type'] == 'subprocess_usage'
+
+    def test_analyze_ast_handles_invalid_syntax():
+        # Test error case
+        with pytest.raises(SyntaxError):
+            analyze_ast("invalid python code {{{")
+    ```
+  </Step>
+
+  <Step title="Run your test">
+    ```bash
+    cd python-api
+    pytest lib/scan/test_stage2.py
+    ```
+  </Step>
+</Steps>
+
+## Test Guidelines
+
+### General Principles
+
+<AccordionGroup>
+  <Accordion title="Test-Driven Development (TDD)">
+    Follow the RED → GREEN → REFACTOR cycle:
+    
+    1. **RED** — Write a failing test first
+    2. **GREEN** — Write minimal code to make it pass
+    3. **REFACTOR** — Clean up the code while keeping tests green
+    
+    This ensures all code is tested and testable.
+  </Accordion>
+
+  <Accordion title="Arrange, Act, Assert Pattern">
+    Structure tests in three clear phases:
+    
+    ```typescript
+    it('should do something', () => {
+      // Arrange — Set up test data
+      const input = { foo: 'bar' };
+      
+      // Act — Execute the code under test
+      const result = doSomething(input);
+      
+      // Assert — Verify the outcome
+      expect(result).toBe('expected');
+    });
+    ```
+  </Accordion>
+
+  <Accordion title="Descriptive Test Names">
+    Use clear, readable test names that describe what's being tested:
+    
+    **Good:**
+    - `should reject skill if permissions exceed budget`
+    - `should return 404 when skill not found`
+    - `should generate lockfile with SHA-512 hashes`
+    
+    **Bad:**
+    - `test1`
+    - `it works`
+    - `testInstall`
+  </Accordion>
+
+  <Accordion title="Independent Tests">
+    Each test should be independent and not rely on other tests:
+    
+    - Use `beforeEach` for setup instead of running tests in order
+    - Clean up after tests with `afterEach`
+    - Don't share mutable state between tests
+  </Accordion>
+
+  <Accordion title="One Assertion Per Test (when possible)">
+    Focus each test on one behavior:
+    
+    ```typescript
+    // Good — focused
+    it('should validate skill name format', () => {
+      expect(validateSkillName('@org/skill')).toBe(true);
+    });
+
+    it('should reject invalid skill names', () => {
+      expect(validateSkillName('invalid')).toBe(false);
+    });
+
+    // Avoid — testing multiple things
+    it('should validate skills', () => {
+      expect(validateSkillName('@org/skill')).toBe(true);
+      expect(validateSkillName('invalid')).toBe(false);
+      expect(validateVersion('1.0.0')).toBe(true);
+    });
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Mocking
+
+**Vitest mocking:**
+
+```typescript
+import { vi } from 'vitest';
+import * as fs from 'node:fs';
+
+// Mock module
+vi.mock('node:fs');
+
+// Mock implementation
+vi.mocked(fs.readFileSync).mockReturnValue('mock content');
+
+// Verify calls
+expect(fs.readFileSync).toHaveBeenCalledWith('path/to/file');
+```
+
+**pytest mocking:**
+
+```python
+from unittest.mock import Mock, patch
+
+def test_with_mock():
+    with patch('module.function') as mock_fn:
+        mock_fn.return_value = 'mocked'
+        result = call_function_that_uses_it()
+        assert result == 'mocked'
+        mock_fn.assert_called_once()
+```
+
+### Testing API Routes
+
+**Next.js Route Handlers:**
+
+```typescript
+import { GET } from '../route';
+import { NextRequest } from 'next/server';
+
+it('should return skill metadata', async () => {
+  const request = new NextRequest('http://localhost/api/v1/skills/test');
+  const response = await GET(request, { params: { name: 'test' } });
+  
+  expect(response.status).toBe(200);
+  const data = await response.json();
+  expect(data.name).toBe('test');
+});
+```
+
+### Testing CLI Commands
+
+**Spawning real CLI:**
+
+```typescript
+import { execSync } from 'node:child_process';
+
+it('should install skill', () => {
+  const output = execSync('tank install @test/skill', { 
+    encoding: 'utf-8' 
+  });
+  expect(output).toContain('Installed @test/skill');
+});
+```
+
+### Testing Database Queries
+
+**Drizzle ORM tests:**
+
+```typescript
+import { db } from '../db';
+import { skills } from '../db/schema';
+
+it('should create skill', async () => {
+  const [skill] = await db.insert(skills).values({
+    name: '@test/skill',
+    description: 'Test skill',
+  }).returning();
+  
+  expect(skill.name).toBe('@test/skill');
+});
+```
+
+## Performance Testing
+
+### Running Performance Tests
+
+<Steps>
+  <Step title="Seed test data">
+    ```bash
+    pnpm --filter=web scripts/perf-seed.ts
+    ```
+    
+    Creates 500+ test skills with realistic data.
+  </Step>
+
+  <Step title="Run performance tests">
+    ```bash
+    pnpm test:perf
+    ```
+    
+    Measures p95 latency for API and web routes.
+  </Step>
+
+  <Step title="Analyze results">
+    ```bash
+    pnpm --filter=web scripts/perf-analyze-runs.ts
+    ```
+    
+    Compares against budgets and generates reports.
+  </Step>
+</Steps>
+
+### Performance Budgets
+
+**API routes (p95 latency):**
+- `/api/v1/skills` (search) — < 100ms
+- `/api/v1/skills/[name]` (metadata) — < 50ms
+- `/api/v1/skills/[name]/[version]` — < 50ms
+
+**Web routes (TTFB):**
+- Homepage — < 200ms
+- Skill detail page — < 300ms
+
+**What happens on regression:**
+- CI fails if p95 exceeds budget
+- Merge blocked until performance fixed
+
+## Coverage
+
+Tank doesn't enforce code coverage metrics, but aims for:
+
+- **Critical paths** — 100% coverage (auth, permissions, security)
+- **Business logic** — High coverage (audit scoring, publish pipeline)
+- **Utilities** — Moderate coverage (helpers, formatters)
+
+**Check coverage:**
+
+```bash
+pnpm test --coverage
+```
+
+## CI Testing
+
+**GitHub Actions workflow:**
+
+1. **Test job** — Runs all unit and integration tests with fake credentials
+2. **Performance job** — Runs performance tests with real PostgreSQL 17 + Supabase local
+
+**When tests run:**
+- On every push to a branch
+- On every pull request
+- Before merge to `main`
+
+**When tests fail:**
+- PR checks fail
+- Merge is blocked
+- Review requires fixes
+
+## Debugging Tests
+
+### Vitest Debugging
+
+```bash
+# Run specific test file
+pnpm test --filter=cli -- install.test.ts
+
+# Run single test by name
+pnpm test --filter=cli -- -t "should install skill"
+
+# Watch mode
+pnpm test --filter=cli -- --watch
+
+# Enable verbose output
+pnpm test --filter=cli -- --reporter=verbose
+```
+
+### pytest Debugging
+
+```bash
+# Run specific test file
+pytest test_analyze.py
+
+# Run single test
+pytest test_analyze.py::test_stage2_detects_subprocess
+
+# Show print statements
+pytest -s
+
+# Show verbose output
+pytest -v
+
+# Drop into debugger on failure
+pytest --pdb
+```
+
+## Common Testing Patterns
+
+### Testing Error Cases
+
+```typescript
+it('should throw error on invalid input', async () => {
+  await expect(doSomething({ invalid: true }))
+    .rejects.toThrow('Expected error message');
+});
+```
+
+### Testing Async Code
+
+```typescript
+it('should handle async operations', async () => {
+  const result = await fetchData();
+  expect(result).toBeDefined();
+});
+```
+
+### Testing Timeouts
+
+```typescript
+it('should timeout after 5 seconds', async () => {
+  await expect(longRunningOperation())
+    .rejects.toThrow('Timeout');
+}, 6000); // Test timeout
+```
+
+### Snapshot Testing
+
+```typescript
+import { expect } from 'vitest';
+
+it('should match snapshot', () => {
+  const output = generateOutput();
+  expect(output).toMatchSnapshot();
+});
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Setup" icon="wrench" href="/development/setup">
+    Set up your local development environment
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/development/contributing">
+    Learn how to contribute to Tank
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Understand the system design
+  </Card>
+</CardGroup>

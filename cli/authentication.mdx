@@ -1,0 +1,184 @@
+---
+title: Authentication Commands
+description: Manage your Tank registry authentication with login, logout, and whoami
+---
+
+# Authentication Commands
+
+Authentication commands manage your connection to the Tank registry. Tank uses a browser-based OAuth flow to securely obtain API tokens.
+
+## tank login
+
+Authenticate with the Tank registry using browser-based OAuth.
+
+```bash
+tank login
+```
+
+### How It Works
+
+1. Initiates OAuth flow with the registry
+2. Opens your browser to GitHub for authentication
+3. Polls the registry until authorization completes
+4. Stores API token in `~/.tank/config.json`
+
+### Options
+
+- `--timeout <ms>` - Authentication timeout in milliseconds (default: 300000 = 5 minutes)
+- `--poll-interval <ms>` - Polling interval in milliseconds (default: 2000)
+
+### Environment Variables
+
+- `TANK_DEBUG=1` - Enable debug logging for authentication flow
+
+### Example Output
+
+```bash
+$ tank login
+Starting login...
+Opened browser for authentication.
+Waiting for authorization...
+✓ Logged in as alice@example.com
+```
+
+### Manual Browser Flow
+
+If the browser fails to open automatically:
+
+```bash
+$ tank login
+Starting login...
+Could not open browser automatically.
+Open this URL in your browser:
+  https://tank.dev/auth/cli/abc123...
+Waiting for authorization...
+```
+
+### Errors
+
+- **Login timed out** - Authorization not completed within 5 minutes. Run `tank login` again.
+- **Failed to start auth session** - Network error connecting to registry. Check your internet connection.
+
+## tank logout
+
+Remove stored credentials from local config.
+
+```bash
+tank logout
+```
+
+### Behavior
+
+- Removes `token` and `user` from `~/.tank/config.json`
+- If not logged in, prints warning and exits
+- Does not revoke the token on the server (token may still be valid until expiration)
+
+### Example Output
+
+```bash
+$ tank logout
+✓ Logged out
+```
+
+```bash
+$ tank logout
+⚠ Not logged in. Run: tank login
+```
+
+## tank whoami
+
+Display current authenticated user information.
+
+```bash
+tank whoami
+```
+
+### Behavior
+
+- Verifies token with registry `/api/v1/auth/whoami` endpoint
+- Displays cached user info from config
+- Checks token validity and warns if expired
+
+### Example Output
+
+**Logged in (online):**
+
+```bash
+$ tank whoami
+Logged in as: Alice Developer
+Email: alice@example.com
+```
+
+**Logged in (offline):**
+
+```bash
+$ tank whoami
+Logged in as: Alice Developer (offline)
+Email: alice@example.com
+⚠ Could not reach server to verify token. Run: tank login
+```
+
+**Token expired:**
+
+```bash
+$ tank whoami
+✗ Token is invalid or expired. Run: tank login
+```
+
+**Not logged in:**
+
+```bash
+$ tank whoami
+⚠ Not logged in. Run: tank login
+```
+
+### Use Cases
+
+- Verify authentication before publishing
+- Check which account is active in CI/CD
+- Troubleshoot authentication issues
+
+## Configuration File
+
+Authentication data is stored in `~/.tank/config.json`:
+
+```json
+{
+  "registry": "https://tank.dev",
+  "token": "tank_abc123...",
+  "user": {
+    "name": "Alice Developer",
+    "email": "alice@example.com"
+  }
+}
+```
+
+### Token Format
+
+API tokens use the `tank_` prefix and are valid for 90 days. Tokens grant:
+
+- `skills:read` - Read public and private skills you have access to
+- `skills:write` - Publish skills to your account or organizations
+- `skills:admin` - Manage skill versions and settings (if admin)
+
+## Security Best Practices
+
+- **Never commit** `~/.tank/config.json` to version control
+- Use `tank logout` on shared machines
+- Rotate tokens regularly (re-login)
+- Use service accounts for CI/CD instead of personal accounts
+- Enable debug logging only when troubleshooting (`TANK_DEBUG=1`)
+
+## CI/CD Authentication
+
+For automated workflows, use service account tokens:
+
+```bash
+# GitHub Actions
+- name: Authenticate with Tank
+  run: |
+    mkdir -p ~/.tank
+    echo '{"registry":"https://tank.dev","token":"'${{ secrets.TANK_TOKEN }}'"}' > ~/.tank/config.json
+```
+
+See the [API Keys](/registry/api-keys) guide for service account details.

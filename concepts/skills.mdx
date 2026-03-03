@@ -1,0 +1,207 @@
+---
+title: Skills
+description: What are AI agent skills, SKILL.md format, and skill structure
+---
+
+# Skills
+
+Tank skills are reusable packages of instructions and code that teach AI agents how to perform specific tasks. Think of them as NPM packages for AI capabilities — versioned, dependency-managed, and security-scanned.
+
+## What is a Skill?
+
+A skill is a packaged collection of:
+
+- **SKILL.md** — Human-readable instructions that explain what the skill does and how to use it
+- **skills.json** — Manifest with metadata, dependencies, and permission declarations
+- **Supporting files** — Code, templates, data files, or configuration needed by the skill
+
+<Note>
+  Skills are installed locally in `.tank/skills/` and can be referenced by AI agents to gain new capabilities without modifying the agent's core code.
+</Note>
+
+## SKILL.md Format
+
+Every skill must include a `SKILL.md` file — this is the instruction manual for AI agents. The format is flexible Markdown, but should follow these conventions:
+
+### Basic Structure
+
+```markdown
+# Skill Name
+
+One-sentence description of what this skill does.
+
+## Overview
+
+Detailed explanation of the skill's purpose and use cases.
+
+## Capabilities
+
+List of specific tasks or operations the skill enables.
+
+## Permissions
+
+Table or list of required permissions and why they're needed.
+
+## Best Practices
+
+Recommendations for using the skill effectively.
+```
+
+### Example: Google Sheets Skill
+
+Here's an excerpt from a real skill:
+
+```markdown
+# Google Sheets
+
+Read, write, format, and analyze spreadsheet data through the Google Sheets API.
+
+## Overview
+
+This skill teaches AI agents to work with Google Sheets — reading and writing
+cell data, formatting, creating charts, managing named ranges, and using formulas.
+Supports both simple value operations and complex batch updates.
+
+## Capabilities
+
+### Reading Data
+- Read single cells, ranges, and multiple ranges in one call
+- Get values with formatting metadata
+- Read entire sheets or named ranges
+- Choose value render options: FORMATTED_VALUE, UNFORMATTED_VALUE, FORMULA
+
+### Writing Data
+- Write to single cells or ranges
+- Append rows to the end of a table
+- Batch update multiple ranges in a single request
+- Choose input options: RAW or USER_ENTERED
+
+## Permissions
+
+| Permission | Scope | Reason |
+|-----------|-------|--------|
+| Network | `*.googleapis.com` | Sheets API calls |
+| Network | `accounts.google.com` | OAuth authentication |
+| Filesystem | Read `./**` | Read local CSV/data files |
+| Subprocess | None | Not required |
+
+## Best Practices
+
+1. **Use A1 notation** for ranges — quote sheet names with spaces
+2. **Batch operations** to minimize API calls
+3. **USER_ENTERED** for formulas and dates
+4. **Append, don't overwrite** — use `values.append` for adding rows
+5. **Named ranges** instead of hardcoded A1 references
+```
+
+## Skill Package Structure
+
+A typical skill package looks like this:
+
+```
+@org/skill-name/
+├── SKILL.md              # Agent instructions (required)
+├── skills.json           # Manifest (required)
+├── LICENSE               # License file
+├── src/                  # Source code
+│   ├── main.py
+│   └── utils.js
+├── templates/            # Templates or examples
+└── README.md             # Human-readable docs (optional)
+```
+
+<Warning>
+  The package structure is validated during `tank publish`. Blocked file types include binaries (`.exe`, `.so`, `.dll`), compiled bytecode (`.pyc`, `.pyo`, `.class`), and other executables.
+</Warning>
+
+## Naming Conventions
+
+Skill names must follow NPM-style scoped naming:
+
+- **Format**: `@org/skill-name`
+- **Lowercase only** with hyphens allowed
+- **Scoped**: Must include organization prefix (e.g., `@tank/google-sheets`)
+- **214 characters or fewer**
+
+From the schema:
+
+```typescript
+const NAME_PATTERN = /^@[a-z0-9-]+\/[a-z0-9][a-z0-9-]*$/;
+```
+
+## Example Skills
+
+### Simple Tool Skill
+
+```markdown
+# Hello World Skill
+
+A simple test skill for verifying the Tank registry E2E flow.
+
+## What it does
+
+This skill demonstrates the basic structure of a Tank skill package.
+
+## Permissions
+
+- **Network**: Outbound access to `*.example.com`
+- **Filesystem**: Read access to `./src/**`
+- **Subprocess**: Not allowed
+```
+
+### Skills with Dependencies
+
+Skills can depend on other skills. This is declared in `skills.json`:
+
+```json
+{
+  "name": "@myorg/advanced-analytics",
+  "version": "1.0.0",
+  "skills": {
+    "@tank/google-sheets": "^2.0.0",
+    "@tank/chart-generator": "~1.5.0"
+  }
+}
+```
+
+<Accordion title="FAQ: When should I create a new skill vs. update an existing one?">
+  Create a new skill when:
+  - The functionality is unrelated to existing skills
+  - You want to share it with others or across projects
+  - It has distinct permission requirements
+
+  Update an existing skill when:
+  - You're adding features to an existing capability
+  - Fixing bugs or improving documentation
+  - The change is backward-compatible (minor/patch version bump)
+</Accordion>
+
+## Best Practices
+
+### Writing SKILL.md
+
+1. **Be concise** — AI agents have limited context windows
+2. **Use examples** — Show specific API calls or command patterns
+3. **Explain permissions** — Make it clear why each permission is needed
+4. **List capabilities explicitly** — Bullet points work better than prose
+5. **Include error handling** — Document common failure modes
+
+### Packaging
+
+1. **Keep it small** — Maximum 50MB per package, 1000 files
+2. **No binaries** — Text files only (code, markdown, JSON, YAML)
+3. **Minimal dependencies** — Fewer dependencies = faster installs and fewer security risks
+4. **Version carefully** — Follow semantic versioning strictly
+
+### Security
+
+1. **Declare all permissions** — Undeclared permissions will be denied at runtime
+2. **Request minimal access** — Only ask for what you need
+3. **No hardcoded secrets** — Use environment variables or user-provided credentials
+4. **Scan before publishing** — `tank publish` automatically runs security scans
+
+## Next Steps
+
+- [Manifest Format](/concepts/manifest) — Learn about skills.json structure
+- [Permissions](/concepts/permissions) — Understand the permission model
+- [Security Scanning](/concepts/security-scanning) — How Tank validates skills

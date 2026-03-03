@@ -1,0 +1,245 @@
+---
+title: Authentication Commands
+description: Manage authentication with the Tank registry
+---
+
+Tank uses browser-based OAuth for authentication. API keys (prefixed with `tank_`) are stored in `~/.tank/config.json`.
+
+## login
+
+Authenticate with the Tank registry via browser OAuth.
+
+```bash
+tank login
+```
+
+### Description
+
+Starts a browser-based OAuth flow to authenticate with the Tank registry:
+
+1. Generates a random state for CSRF protection
+2. POSTs to `/api/v1/cli-auth/start` to create an auth session
+3. Opens browser to GitHub OAuth authorization page
+4. Polls `/api/v1/cli-auth/exchange` every 2 seconds for completion
+5. Writes API token and user info to `~/.tank/config.json`
+
+### Options
+
+<ParamField path="--timeout" type="number" default="300000">
+  Maximum time to wait for authorization (milliseconds). Default: 5 minutes.
+</ParamField>
+
+<ParamField path="--poll-interval" type="number" default="2000">
+  Interval between authorization polling requests (milliseconds). Default: 2 seconds.
+</ParamField>
+
+### Examples
+
+```bash
+# Standard login flow
+tank login
+# Output:
+# Starting login...
+# Opened browser for authentication.
+# Waiting for authorization...
+# ✓ Logged in as john-doe
+
+# If browser fails to open automatically
+tank login
+# Output:
+# Starting login...
+# Could not open browser automatically.
+# Open this URL in your browser:
+#   https://tank.dev/auth/cli?session=abc123&state=xyz789
+```
+
+### Exit Codes
+
+- `0` - Successfully authenticated
+- `1` - Authentication failed or timed out
+
+### Implementation Details
+
+- **Timeout**: Default 5 minutes (300,000ms), configurable via options
+- **Poll Interval**: Default 2 seconds (2,000ms)
+- **CSRF Protection**: Random UUID state parameter
+- **Storage**: Token and user info written to `~/.tank/config.json`
+- **API Key Format**: Prefix `tank_` followed by random characters
+
+### Error Messages
+
+- `"Failed to start auth session: <error>"` - Could not connect to registry
+- `"Login timed out. Please try again."` - No authorization within timeout period
+- `"Exchange failed: <error>"` - Unexpected error during polling
+
+---
+
+## logout
+
+Remove authentication token from config.
+
+```bash
+tank logout
+```
+
+### Description
+
+Removes the stored API token and user information from `~/.tank/config.json`. Does not revoke the token on the server.
+
+### Options
+
+No options.
+
+### Examples
+
+```bash
+# Logout
+tank logout
+# Output: ✓ Logged out
+
+# Logout when not logged in
+tank logout
+# Output: ⚠ Not logged in. Run: tank login
+```
+
+### Exit Codes
+
+- `0` - Success (even if not logged in)
+
+### Implementation Details
+
+- Sets `token` and `user` to `undefined` in config
+- Does not make any network requests
+- Safe to run multiple times
+
+---
+
+## whoami
+
+Show the currently logged-in user.
+
+```bash
+tank whoami
+```
+
+### Description
+
+Displays the current user's name and email, and verifies the token is valid by making a request to `/api/v1/auth/whoami`.
+
+### Options
+
+No options.
+
+### Examples
+
+```bash
+# Show current user
+tank whoami
+# Output:
+# Logged in as: john-doe
+# Email: john@example.com
+
+# When not logged in
+tank whoami
+# Output: ⚠ Not logged in. Run: tank login
+
+# When token is expired
+tank whoami
+# Output: Token is invalid or expired. Run: tank login
+
+# When offline (cached user info)
+tank whoami
+# Output:
+# Logged in as: john-doe (offline)
+# Email: john@example.com
+# ⚠ Could not reach server to verify token. Run: tank login
+```
+
+### Exit Codes
+
+- `0` - Token is valid
+- `1` - Token is invalid, expired, or network error
+
+### Implementation Details
+
+- **Online Mode**: Verifies token with `GET /api/v1/auth/whoami`
+- **Offline Mode**: Falls back to cached user info from config if server unreachable
+- **Status Code Handling**:
+  - `401` - Token invalid or expired
+  - `!ok` (non-401) - Server error but shows cached user
+  - Network error - Shows cached user with warning
+
+### API Endpoint
+
+```
+GET /api/v1/auth/whoami
+Authorization: Bearer {token}
+User-Agent: tank/{version}
+```
+
+Response:
+```json
+{
+  "name": "john-doe",
+  "email": "john@example.com"
+}
+```
+
+---
+
+## Common Patterns
+
+### Check Login Status
+
+```bash
+# Verify you're logged in before publishing
+tank whoami && tank publish
+```
+
+### Re-authenticate
+
+```bash
+# Logout and login again
+tank logout && tank login
+```
+
+### Scripting with Authentication
+
+```bash
+# Check if logged in (exit code)
+if tank whoami > /dev/null 2>&1; then
+  echo "Authenticated"
+else
+  echo "Not authenticated"
+  tank login
+fi
+```
+
+## Configuration File
+
+Authentication data is stored in `~/.tank/config.json`:
+
+```json
+{
+  "registry": "https://tank.dev",
+  "token": "tank_abc123xyz789...",
+  "user": {
+    "name": "john-doe",
+    "email": "john@example.com"
+  }
+}
+```
+
+<Warning>
+  Never commit `~/.tank/config.json` to version control. It contains your API key.
+</Warning>
+
+## Token Scopes
+
+API tokens generated via `tank login` have the following scopes:
+
+- `skills:read` - Read skill metadata and download tarballs
+- `skills:write` - Publish new skill versions
+- `orgs:read` - Read organization membership
+
+Service account tokens can have restricted scopes. See [API Keys](/registry/api-keys) for service account configuration.

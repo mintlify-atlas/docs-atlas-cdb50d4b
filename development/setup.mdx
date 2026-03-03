@@ -1,0 +1,174 @@
+---
+title: Local Development Setup
+description: Set up Tank for local development
+---
+
+Get Tank running locally for development and testing.
+
+## Prerequisites
+
+Before you begin, ensure you have the following installed:
+
+- **Node.js** 24 or later
+- **pnpm** 10 or later (install via corepack: `corepack enable`)
+- **Python** 3.14 or later (for security analysis functions)
+- A **Supabase** project (for database and storage)
+- A **GitHub OAuth App** (for authentication)
+
+## Setup Steps
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/tankpkg/tank.git
+    cd tank
+    ```
+  </Step>
+
+  <Step title="Enable pnpm and install dependencies">
+    ```bash
+    corepack enable
+    pnpm install
+    ```
+    
+    This installs all dependencies across the monorepo workspaces using pnpm 10.29.3.
+  </Step>
+
+  <Step title="Configure environment variables">
+    ```bash
+    cp .env.example .env.local
+    ```
+    
+    Edit `.env.local` and fill in the required values:
+    
+    - `DATABASE_URL` — PostgreSQL connection string
+    - `SUPABASE_URL` — Your Supabase project URL
+    - `SUPABASE_ANON_KEY` — Public key
+    - `SUPABASE_SERVICE_ROLE_KEY` — Service role key (server-only)
+    - `BETTER_AUTH_SECRET` — Session encryption secret
+    - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` — OAuth credentials
+    - `FIRST_ADMIN_EMAIL` — Email address to promote to admin role
+    
+    See `.env.example` for the complete list of configuration options.
+  </Step>
+
+  <Step title="Push database schema">
+    ```bash
+    cd apps/web
+    npx drizzle-kit push
+    ```
+    
+    This creates all necessary tables in your PostgreSQL database.
+  </Step>
+
+  <Step title="Bootstrap admin user">
+    ```bash
+    pnpm --filter=web admin:bootstrap
+    ```
+    
+    This promotes the user matching `FIRST_ADMIN_EMAIL` to admin role.
+  </Step>
+
+  <Step title="Start development server">
+    ```bash
+    pnpm dev
+    ```
+    
+    This starts all development servers using Turbo:
+    - Web app at `http://localhost:3000`
+    - Python API at `http://localhost:8000`
+    
+    To run only the web app:
+    ```bash
+    pnpm dev --filter=web
+    ```
+  </Step>
+</Steps>
+
+## Available Commands
+
+### Development
+
+```bash
+pnpm dev                    # Start all dev servers (Turbo)
+pnpm build                  # Build all packages
+pnpm lint                   # Run all linters (Next.js lint + react-doctor)
+```
+
+### Testing
+
+```bash
+pnpm test                   # Run all tests (461 TypeScript + 16 Python)
+pnpm test --filter=cli      # Run CLI tests only
+pnpm test --filter=web      # Run web tests only
+pnpm test --filter=shared   # Run shared package tests only
+pnpm test:e2e               # Run E2E tests (needs .env.local)
+pnpm test:perf              # Run performance tests (needs real DB)
+```
+
+### Database
+
+```bash
+pnpm --filter=web drizzle-kit generate  # Generate migration
+pnpm --filter=web drizzle-kit push      # Push schema to DB
+```
+
+### Admin
+
+```bash
+pnpm --filter=web admin:bootstrap       # Promote bootstrap admin user
+```
+
+## Project Structure
+
+Tank is a monorepo managed by Turborepo with pnpm workspaces:
+
+```
+tank/
+├── apps/
+│   ├── web/          # Next.js 15 web app + API (Vercel)
+│   └── cli/          # Tank CLI (TypeScript)
+├── packages/
+│   └── shared/       # Shared schemas, types, constants
+├── python-api/       # Security scanner (FastAPI, 6-stage pipeline)
+├── e2e/              # End-to-end tests
+├── docs/             # Product brief, architecture, roadmap
+└── scripts/          # Utilities and tooling
+```
+
+## Troubleshooting
+
+### Hot Reload Issues
+
+The web app uses a `globalThis.__db` singleton to prevent database connection leaks during hot reload. If you see connection pool errors, restart the dev server.
+
+### Test Failures
+
+E2E tests require real credentials in `.env.local`. If tests fail:
+
+1. Ensure all environment variables are set
+2. Check that the database is accessible
+3. Verify Supabase storage is configured
+
+### Python Dependencies
+
+If the security scanner fails:
+
+```bash
+cd python-api
+pip install -r requirements.txt
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/development/architecture">
+    Understand the system design and tech stack
+  </Card>
+  <Card title="Contributing" icon="code-pull-request" href="/development/contributing">
+    Learn how to contribute to Tank
+  </Card>
+  <Card title="Testing" icon="flask" href="/development/testing">
+    Run and write tests
+  </Card>
+</CardGroup>

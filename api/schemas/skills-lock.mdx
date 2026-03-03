@@ -1,0 +1,197 @@
+---
+title: "skills.lock Schema"
+description: "Complete schema reference for the skills.lock lockfile"
+---
+
+The `skills.lock` file ensures deterministic, reproducible skill installations. It records exact versions, download URLs, integrity hashes, and resolved permissions for all dependencies.
+
+## Schema Definition
+
+The lockfile uses a strict schema with versioning for future compatibility.
+
+### Root Fields
+
+<ParamField path="lockfileVersion" type="number" required>
+  Lockfile format version.
+  
+  **Value:** `1` (current version)
+  
+  **Purpose:**
+  - Enables future format migrations
+  - Tank CLI validates this version before processing
+  - Breaking changes to lockfile structure will increment this number
+</ParamField>
+
+<ParamField path="skills" type="object" required>
+  Map of skill names to their locked metadata.
+  
+  **Type:** `Record<string, LockedSkill>`
+  
+  **Format:**
+  - Keys: scoped skill names (e.g., `@org/skill-name`)
+  - Values: locked skill metadata objects
+  
+  See [LockedSkill Schema](#locked-skill-schema) below for value structure.
+</ParamField>
+
+## LockedSkill Schema
+
+Each skill entry in the `skills` record contains the following fields:
+
+<ParamField path="resolved" type="string" required>
+  Absolute URL to the skill tarball.
+  
+  **Constraints:**
+  - Must be a valid URL
+  - Typically points to Tank registry storage
+  - Used to download the exact package version
+  
+  **Example:** `"https://storage.tankpkg.dev/tarballs/acme/my-skill/1.2.3.tgz"`
+</ParamField>
+
+<ParamField path="integrity" type="string" required>
+  SHA-512 cryptographic hash of the tarball.
+  
+  **Constraints:**
+  - Must start with `sha512-`
+  - Format: `sha512-<base64-encoded-hash>`
+  - Used to verify package integrity during installation
+  - Prevents tampering and ensures reproducibility
+  
+  **Example:** `"sha512-Abc123...xyz789=="`
+</ParamField>
+
+<ParamField path="permissions" type="object" required>
+  Resolved runtime permissions for the skill.
+  
+  **Type:** See [Permissions Schema](/api/schemas/permissions)
+  
+  **Purpose:**
+  - Records the exact permissions declared by this version
+  - Enables permission diff during upgrades
+  - Enforced at runtime by Tank sandbox
+  
+  **Example:**
+  ```json
+  {
+    "network": {
+      "outbound": ["*.api.example.com"]
+    },
+    "filesystem": {
+      "read": ["data/**/*"],
+      "write": ["output/**/*"]
+    },
+    "subprocess": false
+  }
+  ```
+</ParamField>
+
+<ParamField path="audit_score" type="number | null" required>
+  Security audit score for this skill version.
+  
+  **Constraints:**
+  - Range: 0-10 (floating point)
+  - `null` if not yet audited
+  - Calculated by Tank's 6-stage security scanner
+  
+  **Score Ranges:**
+  - `8-10`: Excellent security
+  - `6-7.9`: Good security
+  - `4-5.9`: Moderate risk
+  - `0-3.9`: High risk
+  
+  **Example:** `8.5` or `null`
+</ParamField>
+
+## Complete Example
+
+```json
+{
+  "lockfileVersion": 1,
+  "skills": {
+    "@acme/json-utils": {
+      "resolved": "https://storage.tankpkg.dev/tarballs/acme/json-utils/2.1.0.tgz",
+      "integrity": "sha512-qX8rQtbVN5VBHF3lPH7FflJKT8ZXpVvYOJNjXbP0SxFtN9MzK1w==",
+      "permissions": {
+        "filesystem": {
+          "read": ["**/*.json"]
+        }
+      },
+      "audit_score": 9.2
+    },
+    "@acme/validator": {
+      "resolved": "https://storage.tankpkg.dev/tarballs/acme/validator/1.5.7.tgz",
+      "integrity": "sha512-8kJ9LpQ3XvT4jZHYWMhN0BZQU7VwBLmF9Nx2rG8sCd1A==",
+      "permissions": {
+        "network": {
+          "outbound": ["schema-registry.example.com"]
+        }
+      },
+      "audit_score": 8.7
+    },
+    "@acme/experimental": {
+      "resolved": "https://storage.tankpkg.dev/tarballs/acme/experimental/0.1.0.tgz",
+      "integrity": "sha512-ZvH9pL4mQXrT8oN3jK5VBHF3lPH7FflJKT8ZXpVvYOJ==",
+      "permissions": {
+        "subprocess": true,
+        "network": {
+          "outbound": ["*"]
+        }
+      },
+      "audit_score": null
+    }
+  }
+}
+```
+
+## Validation Rules
+
+- **Lockfile version**: Must be exactly `1` (current version)
+- **Integrity format**: Must start with `sha512-`
+- **Resolved URL**: Must be a valid URL
+- **Audit score**: Must be between 0-10 or `null`
+- **Permissions**: Must conform to [Permissions Schema](/api/schemas/permissions)
+- **Strict mode**: No additional properties allowed
+
+## Purpose and Usage
+
+### Why Lockfiles?
+
+1. **Reproducibility**: Ensures identical installations across environments
+2. **Security**: Verifies package integrity with SHA-512 hashes
+3. **Transparency**: Shows exact dependency tree and permissions
+4. **Audit trail**: Records security scores at install time
+
+### When is it Generated?
+
+- `tank install` - Creates or updates lockfile
+- `tank add <skill>` - Updates lockfile with new dependency
+- `tank update` - Refreshes lockfile with latest versions
+
+### Should I Commit It?
+
+Yes, always commit `skills.lock` to version control:
+- Ensures team members get identical dependencies
+- CI/CD builds are reproducible
+- Security audits are consistent
+
+## Integrity Verification
+
+During installation, Tank:
+
+1. Downloads tarball from `resolved` URL
+2. Computes SHA-512 hash of downloaded file
+3. Compares against `integrity` field
+4. Rejects installation if hashes don't match
+
+This prevents:
+- Man-in-the-middle attacks
+- Registry compromises
+- Supply chain tampering
+
+## Related
+
+- [Permissions Schema](/api/schemas/permissions) - Permission field details
+- [skills.json Schema](/api/schemas/skills-json) - Manifest format
+- [CLI: tank install](/cli/install) - Generate lockfile
+- [CLI: tank audit](/cli/audit) - Check security scores

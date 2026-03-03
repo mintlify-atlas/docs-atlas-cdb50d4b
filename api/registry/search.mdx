@@ -1,0 +1,243 @@
+---
+title: 'Search API'
+description: 'Full-text search for discovering skills in the registry'
+icon: 'magnifying-glass'
+---
+
+## Overview
+
+The Search API provides full-text search across skill names and descriptions using PostgreSQL's GIN index for fast, relevance-ranked results.
+
+## Search Skills
+
+**Endpoint**: `GET /api/v1/search`
+
+Search for skills by name or description. Returns paginated results ranked by relevance.
+
+### Query Parameters
+
+<ParamField query="q" type="string" default="">
+  Search query (searches name and description)
+</ParamField>
+
+<ParamField query="page" type="integer" default="1">
+  Page number (1-indexed)
+</ParamField>
+
+<ParamField query="limit" type="integer" default="20">
+  Results per page (max 50)
+</ParamField>
+
+### Request
+
+**Example** - Search for "hello" skills:
+
+```bash
+GET /api/v1/search?q=hello&page=1&limit=20
+```
+
+**Example** - List all public skills:
+
+```bash
+GET /api/v1/search?page=1&limit=20
+```
+
+### Response
+
+<ResponseField name="results" type="array">
+  Array of matching skills (ranked by relevance)
+  <Expandable>
+    <ResponseField name="name" type="string">
+      Skill name
+    </ResponseField>
+    <ResponseField name="description" type="string">
+      Description from manifest
+    </ResponseField>
+    <ResponseField name="latestVersion" type="string">
+      Latest published version
+    </ResponseField>
+    <ResponseField name="auditScore" type="number">
+      Audit score (0-10)
+    </ResponseField>
+    <ResponseField name="visibility" type="string">
+      `public` or `private`
+    </ResponseField>
+    <ResponseField name="publisher" type="string">
+      Publisher display name
+    </ResponseField>
+    <ResponseField name="downloads" type="integer">
+      Download count (currently always 0, reserved for future use)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="page" type="integer">
+  Current page number
+</ResponseField>
+
+<ResponseField name="limit" type="integer">
+  Results per page
+</ResponseField>
+
+<ResponseField name="total" type="integer">
+  Total matching results
+</ResponseField>
+
+```json
+{
+  "results": [
+    {
+      "name": "@tank/hello-world",
+      "description": "A friendly greeting skill",
+      "latestVersion": "1.0.0",
+      "auditScore": 9,
+      "visibility": "public",
+      "publisher": "Jane Doe",
+      "downloads": 0
+    },
+    {
+      "name": "@acme/hello-enterprise",
+      "description": "Enterprise hello service",
+      "latestVersion": "2.1.0",
+      "auditScore": 8,
+      "visibility": "public",
+      "publisher": "John Smith",
+      "downloads": 0
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 2
+}
+```
+
+## Search Behavior
+
+### Full-Text Search
+
+When `q` parameter is provided:
+
+- Searches both **name** and **description** fields
+- Uses PostgreSQL `to_tsvector` and `plainto_tsquery` for natural language search
+- Supports multi-word queries (e.g., `hello world`)
+- Results ranked by `ts_rank` (relevance score)
+
+**Example**:
+
+```bash
+GET /api/v1/search?q=hello%20world
+```
+
+### Listing Skills
+
+When `q` parameter is empty:
+
+- Returns all accessible skills
+- Sorted by `updated_at` (newest first)
+- Useful for browsing the registry
+
+**Example**:
+
+```bash
+GET /api/v1/search?page=1&limit=50
+```
+
+## Visibility Filtering
+
+### Unauthenticated Requests
+
+Only **public** skills are returned.
+
+### Authenticated Requests
+
+Returns:
+
+- **Public** skills (all)
+- **Private** skills where user is:
+  - The publisher
+  - A member of the owning organization
+  - Explicitly granted access via `skill_access` table
+
+<Tip>
+  Include your API key in the `Authorization` header to access private skills you have permission to view.
+</Tip>
+
+## Pagination
+
+Use `page` and `limit` to navigate large result sets:
+
+```bash
+# First page (20 results)
+GET /api/v1/search?q=security&page=1&limit=20
+
+# Second page
+GET /api/v1/search?q=security&page=2&limit=20
+
+# Large page size (max 50)
+GET /api/v1/search?q=security&page=1&limit=50
+```
+
+### Calculating Pages
+
+```javascript
+const totalPages = Math.ceil(response.total / response.limit);
+const hasNextPage = response.page < totalPages;
+const hasPrevPage = response.page > 1;
+```
+
+## Search Examples
+
+### Find Security Skills
+
+```bash
+curl "https://registry.tank.dev/api/v1/search?q=security"
+```
+
+### Find Skills by Organization
+
+```bash
+curl "https://registry.tank.dev/api/v1/search?q=@acme"
+```
+
+### Browse All Skills
+
+```bash
+curl "https://registry.tank.dev/api/v1/search?limit=50"
+```
+
+### Search with Authentication
+
+```bash
+curl -H "Authorization: Bearer tank_your_api_key" \
+  "https://registry.tank.dev/api/v1/search?q=internal"
+```
+
+## Search Performance
+
+- **GIN Index**: Full-text search uses a GIN index on `search_vector` column
+- **Trigram Similarity**: Fuzzy matching for typo tolerance
+- **Sub-100ms**: Most queries complete in &lt;100ms
+
+## Empty Results
+
+When no skills match the query:
+
+```json
+{
+  "results": [],
+  "page": 1,
+  "limit": 20,
+  "total": 0
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Skills API" icon="box" href="/api/registry/skills">
+    Get detailed skill information
+  </Card>
+  <Card title="Authentication" icon="key" href="/api/registry/authentication">
+    Access private skills with API keys
+  </Card>
+</CardGroup>

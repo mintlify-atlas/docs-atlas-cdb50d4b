@@ -1,0 +1,435 @@
+---
+title: Security Scanning
+description: 6-stage security pipeline, verdict rules, and finding severity levels
+---
+
+# Security Scanning
+
+Every skill package is automatically scanned through a 6-stage security pipeline before being published to the Tank registry. This pipeline detects malicious code, credential leaks, prompt injection, and supply chain risks.
+
+## Overview
+
+Tank's security scanner is implemented in Python (`python-api/`) and runs automatically during `tank publish`. It produces a **verdict** and **audit score** based on findings from all stages.
+
+<Note>
+  The scanner is inspired by the ClawHavoc incident — 341 malicious skills (12% of a major marketplace) that exfiltrated credentials and executed arbitrary code. Tank prevents this through mandatory scanning and permission enforcement.
+</Note>
+
+## 6-Stage Pipeline
+
+```
+┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐    ┌─────────────┐
+│   stage0    │───▶│   stage1    │───▶│   stage2    │───▶│   stage3    │───▶│   stage4    │───▶│   stage5    │
+│   INGEST    │    │  STRUCTURE  │    │   STATIC    │    │  INJECTION  │    │   SECRETS   │    │   SUPPLY    │
+└─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘    └─────────────┘
+```
+
+Each stage runs independently and can succeed, fail, or error without blocking subsequent stages.
+
+### Stage 0: Ingest
+
+**File**: `python-api/lib/scan/stage0_ingest.py`
+
+**Purpose**: Download, extract, and validate tarball structure
+
+**Checks**:
+- Download from authorized domains only (Supabase storage)
+- Validate tarball size (max 50MB compressed, 50MB extracted)
+- Detect zip bombs (compression ratio >100x)
+- Reject symlinks, hardlinks, path traversal
+- Reject binary executables (`.exe`, `.so`, `.dll`, `.pyc`, `.class`)
+- Compute SHA-256 hash for each file
+
+**Critical Findings**:
+- `download_failed` — Cannot retrieve tarball
+- `zip_bomb` — Compression ratio exceeds 100x
+- `path_traversal` — Archive contains dangerous paths like `../../../etc/passwd`
+- `blocked_file_type` — Binary or executable file detected
+- `size_exceeded` — Extracted size exceeds 50MB
+
+**Example**:
+```python
+# From stage0_ingest.py
+MAX_TARBALL_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_EXTRACTED_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_COMPRESSION_RATIO = 100  # decompressed/compressed
+
+BLOCKED_EXTENSIONS = {
+    ".exe", ".so", ".dll", ".dylib", ".wasm",
+    ".class", ".pyc", ".pyo", ".jar", ".war",
+    ".bin", ".dat",
+}
+```
+
+### Stage 1: Structure
+
+**File**: `python-api/lib/scan/stage1_structure.py`
+
+**Purpose**: Validate file structure and detect anomalies
+
+**Checks**:
+- Required files present (`skills.json`, `SKILL.md`)
+- File count within limits (max 1000 files)
+- No hidden files in unexpected locations
+- Valid file extensions (whitelist)
+- Manifest schema validation
+
+**High Findings**:
+- `missing_manifest` — No `skills.json` found
+- `missing_skill_md` — No `SKILL.md` found
+- `file_count_exceeded` — More than 1000 files
+
+**Medium Findings**:
+- `suspicious_hidden_file` — Hidden file outside expected locations (e.g., `.git/`)
+- `unexpected_extension` — File extension not in allowlist
+
+### Stage 2: Static Analysis
+
+**File**: `python-api/lib/scan/stage2_static.py` (~550 lines, largest stage)
+
+**Purpose**: Static code analysis via AST and pattern matching
+
+**Checks**:
+- Python AST analysis (detects `eval`, `exec`, `compile`, `__import__`)
+- JavaScript pattern matching (obfuscated code, dynamic requires)
+- Dangerous function calls (shell execution, file operations)
+- Network operations (HTTP requests, socket connections)
+- Subprocess spawning
+- Dynamic code generation
+- Obfuscation detection (base64, hex encoding)
+- Suspicious imports (e.g., `ctypes`, `subprocess`, `socket`)
+
+**Critical Findings**:
+- `arbitrary_code_exec` — Use of `eval()`, `exec()`, `compile()`
+- `shell_injection_risk` — Unsafe shell command construction
+- `unsafe_deserialization` — Use of `pickle.loads()` or similar
+
+**High Findings**:
+- `obfuscated_code` — Base64-encoded payloads or hex strings
+- `dynamic_import` — Use of `__import__()` or `importlib`
+- `suspicious_network` — Network calls to non-declared domains
+
+**Medium Findings**:
+- `subprocess_spawn` — Subprocess usage without declaration
+- `filesystem_write` — File writes to sensitive paths
+
+### Stage 3: Injection Detection
+
+**File**: `python-api/lib/scan/stage3_injection.py`
+
+**Purpose**: Detect prompt injection and manipulation attempts
+
+**Checks**:
+- Prompt injection patterns ("Ignore previous instructions")
+- System prompt extraction attempts
+- Role confusion attacks (impersonating user/assistant)
+- Instruction override patterns
+- Multi-turn attack sequences
+- Unicode homoglyphs (lookalike characters)
+- Hidden instructions (whitespace tricks, zero-width chars)
+
+**Critical Findings**:
+- `prompt_injection` — Direct injection pattern detected
+- `system_prompt_extraction` — Attempts to extract system prompts
+
+**High Findings**:
+- `role_confusion` — Instructions to change agent role
+- `instruction_override` — Attempts to override core instructions
+
+**Medium Findings**:
+- `unicode_homoglyph` — Suspicious lookalike characters
+- `hidden_instruction` — Zero-width or invisible characters
+
+### Stage 4: Secrets Scanning
+
+**File**: `python-api/lib/scan/stage4_secrets.py`
+
+**Purpose**: Detect hardcoded secrets and credentials
+
+**Checks**:
+- API keys (OpenAI, Anthropic, AWS, GitHub, Stripe, etc.)
+- AWS credentials (access keys, secret keys)
+- Private keys (RSA, SSH, PGP)
+- Database connection strings
+- JWT tokens
+- Generic high-entropy strings (potential secrets)
+
+**Critical Findings**:
+- `hardcoded_api_key` — API key found in code
+- `hardcoded_aws_credentials` — AWS credentials embedded
+- `private_key_embedded` — RSA/SSH private key in code
+
+**High Findings**:
+- `database_credentials` — DB connection string with password
+- `jwt_token` — Hardcoded JWT
+
+**Medium Findings**:
+- `high_entropy_string` — Potential secret (base64, hex)
+
+### Stage 5: Supply Chain
+
+**File**: `python-api/lib/scan/stage5_supply.py`
+
+**Purpose**: Analyze supply chain risks
+
+**Checks**:
+- Dependency analysis (NPM, PyPI, etc.)
+- Known vulnerable packages (CVE database)
+- Typosquatting detection (e.g., `reqests` vs `requests`)
+- Dependency confusion attacks
+- Unpinned dependencies
+- Deprecated packages
+
+**High Findings**:
+- `known_vulnerability` — Dependency has published CVE
+- `typosquatting` — Dependency name closely matches popular package
+
+**Medium Findings**:
+- `unpinned_dependency` — Version range too broad (e.g., `*`)
+- `deprecated_package` — Dependency is marked deprecated
+
+**Low Findings**:
+- `outdated_dependency` — Newer version available
+
+## Verdict Rules
+
+After all stages complete, findings are aggregated and a verdict is computed:
+
+**From `python-api/lib/scan/verdict.py`**:
+
+```python
+def compute_verdict(stage_results: List[StageResult]) -> ScanVerdict:
+    """Compute the final verdict from stage results.
+
+    Rules:
+    - 1+ critical findings → FAIL
+    - 4+ high findings → FAIL
+    - 1-3 high findings → FLAGGED
+    - Any medium or low findings → PASS_WITH_NOTES
+    - No findings → PASS
+    """
+    # Aggregate all findings
+    all_findings = []
+    for stage in stage_results:
+        all_findings.extend(stage.findings)
+
+    # Count by severity
+    critical_count = sum(1 for f in all_findings if f.severity == "critical")
+    high_count = sum(1 for f in all_findings if f.severity == "high")
+    medium_count = sum(1 for f in all_findings if f.severity == "medium")
+    low_count = sum(1 for f in all_findings if f.severity == "low")
+
+    # Apply verdict rules
+    if critical_count > 0:
+        return ScanVerdict.FAIL
+
+    if high_count >= 4:
+        return ScanVerdict.FAIL
+
+    if high_count > 0:
+        return ScanVerdict.FLAGGED
+
+    if medium_count > 0 or low_count > 0:
+        return ScanVerdict.PASS_WITH_NOTES
+
+    return ScanVerdict.PASS
+```
+
+### Verdict Meanings
+
+| Verdict | Severity | Can Publish? | Description |
+|---------|----------|--------------|-------------|
+| `PASS` | Clean | Yes | No findings — perfect security score |
+| `PASS_WITH_NOTES` | Minor | Yes | Only medium/low findings — publishes with warnings |
+| `FLAGGED` | Moderate | Requires review | 1-3 high findings — manual review required |
+| `FAIL` | Severe | No | 1+ critical OR 4+ high findings — cannot publish |
+
+<Warning>
+  Skills with `FAIL` verdict cannot be published. You must fix all critical findings and reduce high findings to 3 or fewer before publishing.
+</Warning>
+
+## Finding Structure
+
+Each finding follows this schema (from `python-api/lib/scan/models.py`):
+
+```python
+class Finding(BaseModel):
+    """A single security finding from any stage."""
+
+    stage: str = Field(..., description="Stage that produced this finding (stage0-stage5)")
+    severity: Literal["critical", "high", "medium", "low"] = Field(
+        ..., description="Severity level"
+    )
+    type: str = Field(..., description="Finding type e.g. 'prompt_injection', 'shell_injection'")
+    description: str = Field(..., description="Human-readable description")
+    location: Optional[str] = Field(None, description="File:line or path reference")
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0, description="Confidence score 0-1")
+    tool: Optional[str] = Field(None, description="Tool or rule that found this")
+    evidence: Optional[str] = Field(None, description="Raw snippet or pattern matched")
+```
+
+### Example Finding
+
+```json
+{
+  "stage": "stage2",
+  "severity": "critical",
+  "type": "arbitrary_code_exec",
+  "description": "Use of eval() detected — can execute arbitrary code",
+  "location": "src/main.py:42",
+  "confidence": 1.0,
+  "tool": "stage2_static",
+  "evidence": "eval(user_input)"
+}
+```
+
+## Audit Score
+
+The audit score (0-10) is computed from findings and stored in `skills.lock`:
+
+**Score Calculation**:
+```python
+score = 10.0
+score -= (critical_count * 3.0)  # -3 per critical
+score -= (high_count * 1.0)      # -1 per high
+score -= (medium_count * 0.3)    # -0.3 per medium
+score -= (low_count * 0.1)       # -0.1 per low
+score = max(0, score)            # Floor at 0
+```
+
+**Score Interpretation**:
+- **10**: Perfect — no findings
+- **9-10**: Excellent — minor notes only
+- **7-8**: Good — some medium findings
+- **5-6**: Fair — multiple medium or 1-2 high
+- **&lt;5**: Poor — critical or many high findings
+
+<Note>
+  You can require a minimum audit score for dependencies in your `skills.json`:
+  ```json
+  {
+    "audit": {
+      "min_score": 8.0
+    }
+  }
+  ```
+  Dependencies with scores below 8.0 will be rejected during `tank install`.
+</Note>
+
+## Scan Response
+
+The full scan response includes all findings, stage results, and metadata:
+
+```typescript
+interface ScanResponse {
+  scan_id: string;                    // UUID of stored scan result
+  verdict: "pass" | "pass_with_notes" | "flagged" | "fail";
+  findings: Finding[];                // All findings from all stages
+  stage_results: StageResult[];       // Per-stage results
+  duration_ms: number;                // Total scan time
+  file_hashes: Record<string, string>; // SHA-256 per file
+}
+
+interface StageResult {
+  stage: string;                      // "stage0" - "stage5"
+  status: "passed" | "failed" | "errored" | "skipped";
+  findings: Finding[];
+  duration_ms: number;
+  error?: string;                     // Error message if status is "errored"
+}
+```
+
+## Viewing Scan Results
+
+You can view scan results for any published skill:
+
+### CLI
+
+```bash
+# View security report for a skill
+tank audit @tank/google-sheets
+
+# Output:
+# @tank/google-sheets@2.1.0
+# Verdict: PASS_WITH_NOTES
+# Audit Score: 9.2/10
+#
+# Findings (2):
+#   [medium] stage2: subprocess_spawn at src/export.py:15
+#   [low] stage5: outdated_dependency — requests@2.28.0 (latest: 2.31.0)
+```
+
+### Web UI
+
+Visit the skill page on the registry:
+
+```
+https://tankpkg.dev/skills/@tank/google-sheets
+```
+
+The security tab shows:
+- Verdict badge
+- Audit score
+- All findings with severity, location, and evidence
+- Stage-by-stage breakdown
+
+## Best Practices
+
+### Before Publishing
+
+1. **Run local scan** (if available):
+   ```bash
+   tank scan --local
+   ```
+
+2. **Review findings** before submitting
+
+3. **Fix critical and high findings** — These will block publishing
+
+4. **Document medium/low findings** — Explain why they're safe in your README or SKILL.md
+
+### Handling Flagged Verdicts
+
+If your skill gets `FLAGGED`, you'll need manual review:
+
+1. **Submit for review**:
+   ```bash
+   tank publish --request-review
+   ```
+
+2. **Provide context** — Explain why high findings are false positives
+
+3. **Wait for approval** — Registry admins will review and approve/reject
+
+### False Positives
+
+Some legitimate code may trigger findings:
+
+**Example**: Dynamic imports for optional dependencies
+
+```python
+# This triggers "dynamic_import" (medium severity)
+try:
+    import numpy as np
+except ImportError:
+    np = None
+```
+
+**Solution**: Document this in your README:
+
+```markdown
+## Security Notes
+
+This skill uses dynamic imports for optional dependencies (numpy, pandas).
+The scanner flags this as `dynamic_import` (medium severity), but it is
+safe because:
+- Imports are hardcoded (no user input)
+- Used only for optional features
+- Falls back gracefully if not installed
+```
+
+## Next Steps
+
+- [Permissions](/concepts/permissions) — Declare permissions correctly to avoid findings
+- [Manifest](/concepts/manifest) — Configure `audit.min_score` for dependencies
+- [Lockfile](/concepts/lockfile) — Audit scores are stored in skills.lock

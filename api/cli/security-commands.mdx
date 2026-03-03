@@ -1,0 +1,383 @@
+---
+title: Security Commands
+description: Verify integrity and analyze security posture of installed skills
+---
+
+Tank provides four security-focused commands to verify skill integrity, analyze permissions, audit security scores, and diagnose setup issues.
+
+## verify
+
+Verify that installed skills match the lockfile.
+
+```bash
+tank verify
+```
+
+### Description
+
+Checks that all skills listed in `skills.lock` exist in `.tank/skills/` and are not empty. Does not re-verify SHA-512 integrity (that's done during install).
+
+### Options
+
+No options.
+
+### Examples
+
+```bash
+# Verify installed skills
+tank verify
+# ✓ All 3 skills verified
+
+# When lockfile is missing
+tank verify
+# Error: No skills.lock found in /path/to/project. Run: tank install
+
+# When skill directory is missing
+tank verify
+# @tank/typescript@1.0.0: directory missing at .tank/skills/@tank/typescript
+# Verification failed: 1 issue found
+```
+
+### Flow
+
+1. Reads `skills.lock` from current directory
+2. For each entry, parses skill name from lock key (`@org/skill@1.0.0` → `@org/skill`)
+3. Checks that `.tank/skills/{name}/` exists
+4. Checks that directory is not empty
+5. Reports any missing or empty directories
+
+### Exit Codes
+
+- `0` - All skills verified successfully
+- `1` - Verification failed (lockfile missing, skills missing, or directories empty)
+
+### When to Use
+
+- After cloning a repository with `skills.lock`
+- Before running a build that depends on skills
+- To diagnose missing skill files
+
+---
+
+## permissions
+
+Display resolved permission summary for installed skills.
+
+```bash
+tank permissions
+tank perms  # alias
+```
+
+### Description
+
+Aggregates permissions from all installed skills and displays them grouped by category. Also checks if resolved permissions fit within the project's permission budget (if defined).
+
+### Options
+
+No options.
+
+### Examples
+
+```bash
+tank permissions
+#
+# Resolved permissions for this project:
+#
+# Network (outbound):
+#   *.npmjs.com    ← @tank/typescript
+#   api.github.com    ← @acme/github-helper
+#
+# Filesystem (read):
+#   ./src/**    ← @tank/typescript, @acme/linter
+#
+# Filesystem (write):
+#   ./dist/**    ← @tank/typescript
+#
+# Subprocess:
+#   allowed    ← @acme/shell-runner
+#
+# Budget status: ✓ PASS (all within budget)
+```
+
+### Budget Violations
+
+```bash
+tank permissions
+# ...
+# Budget status: ✗ FAIL
+#   - network outbound: "api.openai.com" not in budget (requested by @acme/ai-helper)
+#   - subprocess: "subprocess access" not in budget (requested by @acme/shell-runner)
+```
+
+### Budget Configuration
+
+Define budget in `skills.json`:
+
+```json
+{
+  "permissions": {
+    "network": {
+      "outbound": ["*.npmjs.com", "registry.npmjs.org"]
+    },
+    "filesystem": {
+      "read": ["./src/**"],
+      "write": ["./dist/**"]
+    },
+    "subprocess": false
+  }
+}
+```
+
+### Wildcard Matching
+
+- `*.example.com` matches `api.example.com`, `cdn.example.com`, etc.
+- `./src/**` matches `./src/index.ts`, `./src/utils/logger.ts`, etc.
+
+### Exit Codes
+
+- `0` - Success (displays permissions, budget status is informational)
+
+---
+
+## audit
+
+Display security audit results for installed skills.
+
+```bash
+tank audit [name]
+```
+
+### Arguments
+
+<ParamField path="name" type="string" optional>
+  Skill name to audit. Omit to audit all installed skills.
+</ParamField>
+
+### Examples
+
+```bash
+# Audit all skills
+tank audit
+# NAME                           VERSION     SCORE      STATUS
+# @tank/typescript               1.2.0       8.5        pass
+# @acme/helper                   0.3.0       3.2        issues
+#
+# 2 skills audited. 1 pass, 1 has issues.
+
+# Audit specific skill (detailed view)
+tank audit @tank/typescript
+#
+# @tank/typescript
+#
+# Version:       1.2.0
+# Audit Score:   8.5
+# Status:        completed
+#
+# Permissions:
+#   Network:      *.npmjs.com, registry.npmjs.org
+#   Filesystem:   ./src/**, ./dist/** (read), ./dist/** (write)
+#   Subprocess:   no
+```
+
+### Audit Score
+
+Scores range from 0-10:
+
+- **7.0-10.0** (green) - Pass, low risk
+- **4.0-6.9** (yellow) - Flagged, medium risk
+- **0.0-3.9** (red) - Issues, high risk
+
+### Audit Status
+
+- `completed` - Analysis finished
+- `pending` - Analysis in progress (background job)
+- `error` - Analysis failed
+
+### Analysis Pipeline
+
+Tank performs 6-stage security analysis:
+
+1. **Ingest** - Hash files, detect languages
+2. **Structure** - Parse file tree, detect patterns
+3. **Static** - AST analysis, code patterns
+4. **Injection** - Prompt injection detection
+5. **Secrets** - Credential scanning
+6. **Supply Chain** - Dependency analysis
+
+See [Security Scanning](/concepts/security-scanning) for details.
+
+### Verdict Rules
+
+Final verdict is determined by:
+
+- 1+ critical severity → **FAIL**
+- 4+ high severity → **FAIL**
+- 1-3 high severity → **FLAGGED**
+- Only medium/low severity → **PASS_WITH_NOTES**
+- No findings → **PASS**
+
+### Exit Codes
+
+- `0` - Audit completed (scores are informational)
+- `1` - Network error or skill not found
+
+---
+
+## doctor
+
+Diagnose agent integration health.
+
+```bash
+tank doctor
+```
+
+### Description
+
+Runs comprehensive diagnostics on:
+
+- Detected AI agents and their installation status
+- Local skills (from current project)
+- Global skills (from `~/.tank/`)
+- Dev links (created with `tank link`)
+- Skill linking status for each agent
+- Broken symlinks and missing extracts
+
+### Options
+
+No options.
+
+### Examples
+
+```bash
+tank doctor
+# Tank Doctor Report
+# ==================
+#
+# Detected Agents:
+#   ✅ OpenCode    /home/user/.config/opencode/skills
+#
+# Local Skills (2):                          [project: /home/user/my-project]
+#   @tank/typescript  ✅ linked (OpenCode)
+#   @acme/helper  ⚠️ broken link (OpenCode)
+#
+# Global Skills (1):                         [/home/user/.tank/skills]
+#   @tank/common  ✅ linked (OpenCode)
+#
+# Dev Links (1):                             [tank link]
+#   @acme/my-skill  ✅ linked (OpenCode)
+#
+# Suggestions:
+#   • Run `tank install @acme/helper` to fix broken link
+```
+
+### Status Indicators
+
+- ✅ **linked** - Symlink exists and points to valid directory
+- ❌ **not linked** - No symlink in agent directory
+- ⚠️ **broken link** - Symlink exists but target is invalid
+- ⚠️ **missing extract** - Skill in lockfile but `.tank/skills/` directory missing
+- ⚠️ **no agents detected** - No AI agents installed
+
+### Detected Agents
+
+Currently supports:
+
+- **OpenCode** - `~/.config/opencode/skills/`
+
+More agents coming soon.
+
+### Fix Commands
+
+Doctor suggests commands to fix issues:
+
+- `Run \`tank install {skill}\` to fix broken link` - Re-install skill
+- `Run \`tank link\` in the skill directory to fix {skill}` - Re-link dev skill
+- `Run \`tank install @tank/typescript\` to add your first skill` - Install first skill
+
+### Exit Codes
+
+- `0` - Report completed (issues are informational)
+
+### When to Use
+
+- After installing or removing skills
+- When skills don't appear in AI agent
+- To diagnose linking issues
+- Before filing a bug report
+
+---
+
+## Common Workflows
+
+### Verify Integrity After Clone
+
+```bash
+git clone https://github.com/org/repo
+cd repo
+tank install  # Install from lockfile
+tank verify   # Verify integrity
+```
+
+### Check Permissions Before Install
+
+```bash
+tank install @acme/untrusted-skill
+tank permissions  # Review resolved permissions
+```
+
+### Audit All Skills
+
+```bash
+tank audit
+# Review scores
+tank audit @acme/low-score-skill  # Detailed view
+```
+
+### Diagnose Linking Issues
+
+```bash
+tank doctor
+# Follow suggested fix commands
+```
+
+### Continuous Security Monitoring
+
+```bash
+#!/bin/bash
+# Run in CI
+tank verify || exit 1
+tank audit > audit-report.txt
+tank permissions
+```
+
+## Security Best Practices
+
+<Steps>
+  <Step title="Define Permission Budget">
+    Set restrictive permissions in `skills.json` before installing any skills.
+  </Step>
+  <Step title="Set Audit Score Threshold">
+    Require minimum audit score (e.g., `audit.min_score: 7`).
+  </Step>
+  <Step title="Verify After Install">
+    Always run `tank verify` after installing from lockfile.
+  </Step>
+  <Step title="Review Permissions">
+    Run `tank permissions` to see aggregated access rights.
+  </Step>
+  <Step title="Audit Regularly">
+    Monitor `tank audit` scores in CI/CD.
+  </Step>
+  <Step title="Use Doctor for Diagnostics">
+    Run `tank doctor` to catch linking issues early.
+  </Step>
+</Steps>
+
+## Exit Code Summary
+
+All security commands follow this pattern:
+
+- `0` - Command completed successfully
+- `1` - Command failed or skill not found
+
+Note: Audit scores and permission budget violations are **informational** and do not affect exit codes. To enforce policies, use permission budgets and audit score thresholds in `skills.json`.

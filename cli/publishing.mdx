@@ -1,0 +1,316 @@
+---
+title: Publishing Skills
+description: Publish skills to the Tank registry with tank publish
+---
+
+# Publishing Skills
+
+The `tank publish` command packages and uploads your skill to the Tank registry.
+
+## tank publish
+
+Publish a skill package to the registry.
+
+```bash
+tank publish
+```
+
+### Prerequisites
+
+1. **Authentication** - Run `tank login` first
+2. **skills.json** - Create with `tank init`
+3. **Skill files** - Add your skill implementation
+
+### Publishing Flow
+
+1. Read `skills.json` manifest
+2. Pack directory into tarball (`.tgz`)
+3. Validate permissions and metadata
+4. Upload manifest to registry
+5. Upload tarball to signed storage URL
+6. Confirm publication with integrity data
+
+### Example Output
+
+```bash
+$ tank publish
+⠹ Packing...
+⠹ Publishing...
+⠹ Uploading...
+⠹ Confirming...
+✓ Published my-skill@0.1.0 (245.3 KB, 12 files)
+```
+
+## Options
+
+### --dry-run
+
+Preview the publication without uploading.
+
+```bash
+tank publish --dry-run
+```
+
+**Output:**
+
+```bash
+$ tank publish --dry-run
+⠹ Packing...
+name:    my-skill
+version: 0.1.0
+visibility: public
+size:    512.4 KB (23 files)
+tarball: 245.3 KB (compressed)
+✓ Auth verified with server.
+✓ Dry run complete — no files were uploaded.
+```
+
+Use `--dry-run` to:
+- Verify tarball creation works
+- Check compressed size
+- Validate authentication
+- Preview what will be published
+
+### --private
+
+Override visibility to private.
+
+```bash
+tank publish --private
+```
+
+Forces `visibility: "private"` in the manifest, regardless of `skills.json` value.
+
+### --visibility
+
+Explicitly set visibility.
+
+```bash
+tank publish --visibility public
+tank publish --visibility private
+```
+
+### --directory
+
+Publish from a different directory.
+
+```bash
+tank publish --directory ./my-skill
+```
+
+Defaults to current working directory (`process.cwd()`).
+
+## Tarball Creation
+
+The packer creates a gzip-compressed tarball with security filters:
+
+### Included Files
+
+- All files in the directory
+- SKILL.md (skill documentation)
+- skills.json (manifest)
+- Source code, assets, etc.
+
+### Excluded Files (Always)
+
+```
+.git/
+node_modules/
+.env
+.env.*
+.DS_Store
+*.log
+dist/
+build/
+.tank/
+```
+
+See source: `apps/cli/src/lib/packer.ts:10` (`ALWAYS_IGNORED` constant)
+
+### Size Limits
+
+- **Max total size:** 50 MB uncompressed
+- **Max file count:** 1000 files
+- **Max single file:** No explicit limit, but total must be &lt;50 MB
+
+### Security Filters
+
+During packing, the following are **rejected**:
+
+- Symbolic links
+- Hard links
+- Absolute paths
+- Path traversal attempts (`../`)
+
+## Version Conflicts
+
+If the version already exists in the registry:
+
+```bash
+✗ Version already exists. Bump the version in skills.json
+```
+
+To fix:
+
+1. Edit `skills.json` and increment `version`
+2. Run `tank publish` again
+
+```json
+{
+  "name": "my-skill",
+  "version": "0.2.0",  // Incremented from 0.1.0
+  ...
+}
+```
+
+## Authentication Errors
+
+### Token Expired
+
+```bash
+✗ Authentication failed. Your token may be expired or invalid. Run: tank login
+```
+
+**Fix:** Run `tank login` to refresh your token.
+
+### Insufficient Permissions
+
+```bash
+✗ Publish failed: Token lacks required scope: skills:write
+```
+
+**Fix:** Re-authenticate with `tank login` to obtain a token with write permissions.
+
+### Organization Membership
+
+For scoped packages (`@org/name`):
+
+```bash
+✗ Publish failed: You are not a member of organization "org"
+```
+
+**Fix:** Join the organization or publish under your personal account.
+
+## Publication Workflow
+
+### Step 1: Initialize
+
+```bash
+mkdir my-skill
+cd my-skill
+tank init
+```
+
+### Step 2: Add Files
+
+```
+my-skill/
+├── skills.json
+├── SKILL.md          # Skill documentation
+├── index.ts          # Entry point
+└── lib/
+    └── utils.ts
+```
+
+### Step 3: Preview
+
+```bash
+tank publish --dry-run
+```
+
+### Step 4: Publish
+
+```bash
+tank publish
+```
+
+### Step 5: Verify
+
+```bash
+tank info my-skill
+```
+
+## Integrity Verification
+
+After upload, Tank computes SHA-512 integrity hashes:
+
+```json
+{
+  "integrity": "sha512-abc123...",
+  "fileCount": 12,
+  "tarballSize": 250880
+}
+```
+
+This data is stored in the registry and used during installation to verify:
+- Tarball was not tampered with
+- Downloaded file matches published file
+- No corruption during transfer
+
+See [Installation](/cli/installation) for integrity check details.
+
+## Metadata Extraction
+
+During publish, Tank extracts:
+
+- **README content** - From SKILL.md (converted to HTML)
+- **File list** - All files in tarball with sizes
+- **Permissions** - From `skills.json` manifest
+- **Dependencies** - From `skills` field
+
+## Private Package Publishing
+
+Private skills require organization membership:
+
+```bash
+$ tank publish --private
+⠹ Publishing...
+✓ Published @myorg/analytics@1.0.0 (private)
+```
+
+Private packages:
+- Not visible in public search
+- Require authentication to install
+- Only accessible to organization members
+
+## Error Recovery
+
+### Upload Failed
+
+If tarball upload fails:
+
+```bash
+✗ Failed to upload tarball: 500 Internal Server Error
+```
+
+**Fix:** Retry `tank publish`. The registry will issue a new signed upload URL.
+
+### Confirmation Failed
+
+If confirmation fails after upload:
+
+```bash
+✗ Failed to confirm publish: Integrity mismatch
+```
+
+This indicates the uploaded tarball's hash doesn't match the computed hash. Retry `tank publish`.
+
+## Security Scanning
+
+After publication, Tank automatically:
+
+1. Queues skill for security analysis
+2. Runs 6-stage scan pipeline (ingest, structure, static, injection, secrets, supply-chain)
+3. Computes audit score (0-10)
+4. Assigns verdict (PASS, FLAGGED, FAIL)
+
+See [Security Scanning](/concepts/security-scanning) for details.
+
+## Next Steps
+
+After publishing:
+
+- **View in registry:** `https://tank.dev/skills/your-skill`
+- **Install:** `tank install your-skill`
+- **Check audit:** `tank audit your-skill`
+- **Update:** Bump version and run `tank publish` again
